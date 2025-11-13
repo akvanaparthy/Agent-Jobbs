@@ -106,7 +106,30 @@ export class SessionManager {
       }
 
       // Navigate to domain first to set localStorage/sessionStorage
-      await page.goto('https://www.ziprecruiter.com', { waitUntil: 'domcontentloaded' });
+      await page.goto('https://www.ziprecruiter.com', { 
+        waitUntil: 'domcontentloaded',
+        timeout: 60000 
+      });
+
+      // Wait for Cloudflare challenge to complete
+      logger.info('Waiting for Cloudflare challenge...');
+      try {
+        await page.waitForFunction(
+          () => {
+            const title = document.title;
+            return !title.includes('Just a moment') && 
+                   !title.includes('Checking your browser') &&
+                   !document.querySelector('#challenge-running');
+          },
+          { timeout: 30000 }
+        );
+        logger.info('Cloudflare challenge passed');
+      } catch (error) {
+        logger.warn('Cloudflare challenge timeout - continuing anyway');
+      }
+
+      // Additional wait for page to stabilize
+      await page.waitForTimeout(2000);
 
       // Set localStorage
       if (sessionData.localStorage) {
@@ -148,27 +171,78 @@ export class SessionManager {
       // Navigate to a page that requires authentication
       await page.goto('https://www.ziprecruiter.com/candidate/suggested-jobs', {
         waitUntil: 'domcontentloaded',
-        timeout: 30000,
+        timeout: 60000,
       });
+
+      // Wait for Cloudflare challenge to complete if present
+      logger.info('Checking for Cloudflare challenge...');
+      try {
+        await page.waitForFunction(
+          () => {
+            const title = document.title;
+            return !title.includes('Just a moment') && 
+                   !title.includes('Checking your browser') &&
+                   !document.querySelector('#challenge-running');
+          },
+          { timeout: 30000 }
+        );
+        logger.info('No Cloudflare challenge or passed successfully');
+      } catch (error) {
+        logger.warn('Cloudflare challenge timeout - may be stuck');
+        // Check if we're actually blocked
+        const title = await page.title();
+        if (title.includes('Just a moment')) {
+          logger.error('Stuck on Cloudflare challenge - please solve manually');
+          // Wait longer for manual intervention
+          await page.waitForTimeout(60000);
+        }
+      }
+
+      // Wait a bit for any redirects
+      await page.waitForTimeout(2000);
 
       // Check if we're redirected to login
       const url = page.url();
+      logger.info('Current URL after navigation', { url });
+      
       if (url.includes('/login') || url.includes('/sign-in')) {
         logger.warn('Session is invalid - redirected to login');
         return false;
       }
 
       // Check for elements that indicate logged-in state
-      const isLoggedIn = await page.evaluate(() => {
+      const debugInfo = await page.evaluate(() => {
         // Look for common logged-in indicators
-        const indicators = [
-          document.querySelector('[data-test="user-menu"]'),
-          document.querySelector('.user-profile'),
-          document.querySelector('[aria-label="Profile"]'),
-          // Add more selectors as needed
-        ];
-        return indicators.some(el => el !== null);
+        const selectors = {
+          userMenu: '[data-test="user-menu"]',
+          userProfile: '.user-profile',
+          profileAria: '[aria-label="Profile"]',
+          profileMenu: '[data-testid="profile-menu"]',
+          accountMenu: '[data-testid="account-menu"]',
+          userAvatar: '.user-avatar',
+          accountButton: 'button[aria-label*="Account"]',
+          anyButton: 'button',
+        };
+
+        const found: Record<string, boolean> = {};
+        Object.entries(selectors).forEach(([key, selector]) => {
+          found[key] = document.querySelector(selector) !== null;
+        });
+
+        return {
+          found,
+          title: document.title,
+          hasJobListings: document.querySelector('[data-testid="job-listing"]') !== null ||
+                          document.querySelector('.job-card') !== null ||
+                          document.querySelector('[class*="job"]') !== null,
+        };
       });
+
+      logger.info('Page validation debug info', debugInfo);
+
+      const isLoggedIn = Object.values(debugInfo.found).some(v => v) || 
+                        debugInfo.hasJobListings ||
+                        url.includes('/candidate/');
 
       if (isLoggedIn) {
         logger.info('Session is valid');

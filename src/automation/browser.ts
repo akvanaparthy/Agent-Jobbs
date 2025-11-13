@@ -1,4 +1,5 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import * as path from 'path';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { createStealthContext } from './stealth';
@@ -8,6 +9,7 @@ export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private isPersistent: boolean = false;
 
   /**
    * Launch browser and create context
@@ -16,37 +18,74 @@ export class BrowserManager {
     try {
       logger.info('Launching browser...', {
         headless: config.headless,
+        persistent: config.usePersistentContext,
       });
 
-      // Launch browser
-      this.browser = await chromium.launch({
-        headless: config.headless,
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--disable-dev-shm-usage',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-        ],
-      });
+      if (config.usePersistentContext) {
+        // Use persistent browser context (avoids Cloudflare challenges)
+        const userDataDir = path.resolve(process.cwd(), 'data', 'browser-profile');
+        
+        this.context = await chromium.launchPersistentContext(userDataDir, {
+          headless: config.headless,
+          args: [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+          ],
+          ignoreDefaultArgs: ['--enable-automation'],
+          viewport: { width: 1920, height: 1080 },
+        });
 
-      // Create stealth context
-      this.context = await createStealthContext(this.browser);
+        this.isPersistent = true;
+        this.page = this.context.pages()[0] || await this.context.newPage();
+        this.page.setDefaultTimeout(config.browserTimeout);
 
-      // Create page
-      this.page = await this.context.newPage();
+        logger.info('Browser launched with persistent context');
 
-      // Set default timeout
-      this.page.setDefaultTimeout(config.browserTimeout);
+        return {
+          browser: null as any, // Persistent context doesn't have separate browser object
+          context: this.context,
+          page: this.page,
+        };
+      } else {
+        // Regular browser launch with cookies
+        this.browser = await chromium.launch({
+          headless: config.headless,
+          args: [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials',
+            '--disable-features=BlockInsecurePrivateNetworkRequests',
+          ],
+          ignoreDefaultArgs: ['--enable-automation'],
+        });
 
-      logger.info('Browser launched successfully');
+        // Create stealth context
+        this.context = await createStealthContext(this.browser);
+        this.page = await this.context.newPage();
+        this.page.setDefaultTimeout(config.browserTimeout);
 
-      return {
-        browser: this.browser,
-        context: this.context,
-        page: this.page,
-      };
+        logger.info('Browser launched successfully');
+
+        return {
+          browser: this.browser,
+          context: this.context,
+          page: this.page,
+        };
+      }
     } catch (error) {
       logger.error('Failed to launch browser', { error });
       throw error;

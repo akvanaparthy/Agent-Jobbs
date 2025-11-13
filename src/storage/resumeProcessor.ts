@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import * as mammoth from 'mammoth';
 import { ResumeChunk } from '../types';
 import { logger } from '../utils/logger';
@@ -54,8 +54,10 @@ export class ResumeProcessor {
   private async parsePDF(filepath: string): Promise<string> {
     try {
       const dataBuffer = fs.readFileSync(filepath);
-      const data = await pdfParse(dataBuffer);
-      return data.text;
+      const parser = new PDFParse({ data: dataBuffer });
+      const result = await parser.getText();
+      await parser.destroy();
+      return result.text;
     } catch (error) {
       logger.error('Failed to parse PDF', { error, filepath });
       throw error;
@@ -284,7 +286,9 @@ export class ResumeProcessor {
     const found: string[] = [];
 
     for (const tech of commonTech) {
-      const regex = new RegExp(`\\b${tech}\\b`, 'i');
+      // Escape special regex characters
+      const escapedTech = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedTech}\\b`, 'i');
       if (regex.test(text)) {
         found.push(tech);
       }

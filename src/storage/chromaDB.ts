@@ -1,13 +1,42 @@
 import { ChromaClient, Collection } from 'chromadb';
+import OpenAI from 'openai';
 import { logger } from '../utils/logger';
 import { config } from '../config/config';
 import { ResumeChunk, QAPair } from '../types';
 import { CHROMA_COLLECTIONS } from '../config/constants';
 
+/**
+ * Custom OpenAI Embedding Function for ChromaDB
+ */
+class OpenAIEmbeddingFunction {
+  private openai: OpenAI;
+  private model: string;
+
+  constructor(apiKey: string, model: string = 'text-embedding-3-small') {
+    this.openai = new OpenAI({ apiKey });
+    this.model = model;
+  }
+
+  async generate(texts: string[]): Promise<number[][]> {
+    try {
+      const response = await this.openai.embeddings.create({
+        model: this.model,
+        input: texts,
+      });
+
+      return response.data.map(item => item.embedding);
+    } catch (error) {
+      logger.error('Failed to generate embeddings', { error });
+      throw error;
+    }
+  }
+}
+
 export class ChromaDBManager {
   private client: ChromaClient | null = null;
   private resumeCollection: Collection | null = null;
   private qaCollection: Collection | null = null;
+  private embeddingFunction: OpenAIEmbeddingFunction | null = null;
 
   /**
    * Initialize ChromaDB client
@@ -27,6 +56,16 @@ export class ChromaDBManager {
       await this.client.heartbeat();
       logger.info('ChromaDB connection established');
 
+      // Initialize OpenAI embedding function
+      const openaiApiKey = process.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        throw new Error('OPENAI_API_KEY not found in environment variables');
+      }
+
+      this.embeddingFunction = new OpenAIEmbeddingFunction(openaiApiKey, 'text-embedding-3-small');
+
+      logger.info('OpenAI embedding function initialized');
+
       // Get or create collections
       await this.ensureCollections();
     } catch (error) {
@@ -43,12 +82,14 @@ export class ChromaDBManager {
   private async ensureCollections(): Promise<void> {
     try {
       if (!this.client) throw new Error('Client not initialized');
+      if (!this.embeddingFunction) throw new Error('Embedding function not initialized');
 
       // Resume embeddings collection
       try {
         this.resumeCollection = await this.client.getOrCreateCollection({
           name: CHROMA_COLLECTIONS.RESUME,
           metadata: { description: 'Resume chunks with embeddings' },
+          embeddingFunction: this.embeddingFunction,
         });
         logger.info('Resume collection ready');
       } catch (error) {
@@ -61,6 +102,7 @@ export class ChromaDBManager {
         this.qaCollection = await this.client.getOrCreateCollection({
           name: CHROMA_COLLECTIONS.QA_PAIRS,
           metadata: { description: 'Question-answer pairs with embeddings' },
+          embeddingFunction: this.embeddingFunction,
         });
         logger.info('Q&A collection ready');
       } catch (error) {

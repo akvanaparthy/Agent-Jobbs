@@ -119,6 +119,7 @@ export interface AppConfig {
   chromaDbPort: number;
   headless: boolean;
   browserTimeout: number;
+  usePersistentContext: boolean;
   logLevel: 'error' | 'warn' | 'info' | 'debug';
   logToFile: boolean;
   claudeModel: string;

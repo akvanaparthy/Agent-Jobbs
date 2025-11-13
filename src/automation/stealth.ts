@@ -19,6 +19,9 @@ export async function applyStealthTechniques(context: BrowserContext): Promise<v
       get: () => undefined,
     });
 
+    // Override webdriver in multiple ways
+    delete (navigator as any).__proto__.webdriver;
+
     // Override the `plugins` property to add fake plugins
     Object.defineProperty(navigator, 'plugins', {
       get: () => [
@@ -36,6 +39,13 @@ export async function applyStealthTechniques(context: BrowserContext): Promise<v
           length: 1,
           name: 'Chrome PDF Viewer',
         },
+        {
+          0: { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' },
+          description: 'Native Client Executable',
+          filename: 'internal-nacl-plugin',
+          length: 2,
+          name: 'Native Client',
+        },
       ],
     });
 
@@ -51,18 +61,82 @@ export async function applyStealthTechniques(context: BrowserContext): Promise<v
         ? Promise.resolve({ state: 'denied' } as PermissionStatus)
         : originalQuery(parameters);
 
-    // Add chrome object
+    // Add chrome object with more realistic properties
     (window as any).chrome = {
-      runtime: {},
+      app: {
+        isInstalled: false,
+        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+      },
+      runtime: {
+        OnInstalledReason: {
+          CHROME_UPDATE: 'chrome_update',
+          INSTALL: 'install',
+          SHARED_MODULE_UPDATE: 'shared_module_update',
+          UPDATE: 'update',
+        },
+        OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+        PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+        PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+        PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+        RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+      },
       loadTimes: function () { },
       csi: function () { },
-      app: {},
     };
 
-    // Override the `platform` property if needed
+    // Override the `platform` property
     Object.defineProperty(navigator, 'platform', {
       get: () => 'Win32',
     });
+
+    // Hide automation indicators
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: () => 8,
+    });
+
+    Object.defineProperty(navigator, 'deviceMemory', {
+      get: () => 8,
+    });
+
+    // Override automation detection
+    (window as any).Notification = {
+      permission: 'default',
+    };
+
+    // Overwrite the `call` method on the Function prototype
+    const originalCall = Function.prototype.call;
+    Function.prototype.call = function () {
+      const args = Array.from(arguments);
+      if (
+        args &&
+        args.length > 0 &&
+        args[0] &&
+        args[0].toString &&
+        args[0].toString() === '[object NavigatorUAData]'
+      ) {
+        return undefined;
+      }
+      return originalCall.apply(this, arguments as any);
+    };
+
+    // Mock other common detection methods
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      get: () => 0,
+    });
+
+    // Make the toString functions appear native
+    const toStringNative = (func: Function) => {
+      const oldToString = Function.prototype.toString;
+      Function.prototype.toString = function () {
+        if (this === func) {
+          return 'function () { [native code] }';
+        }
+        return oldToString.call(this);
+      };
+    };
+
+    toStringNative(navigator.permissions.query);
   });
 }
 
@@ -86,16 +160,10 @@ export async function createStealthContext(
     viewport,
     locale,
     timezoneId: 'America/New_York',
-    permissions: [],
     colorScheme: 'light',
-    // Extra HTTP headers
+    // Use Playwright's default headers (more natural)
     extraHTTPHeaders: {
       'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
     },
   });
 

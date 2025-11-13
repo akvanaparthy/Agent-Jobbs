@@ -31,10 +31,11 @@ Create `.env` file:
 cp .env.example .env
 ```
 
-Edit `.env` and add your API key:
+Edit `.env` and add your API key and email:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-your-api-key-here
+ZIPRECRUITER_EMAIL=your_email@example.com
 
 # Basic settings (you can adjust these later)
 SEARCH_KEYWORDS=software engineer,developer
@@ -49,15 +50,21 @@ npm run auth:setup
 ```
 
 **This will:**
-- Open a browser
-- Wait for you to log in
-- Save your session
+- Open a browser automatically
+- Fill in your email from .env
+- Ask you to enter your password/OTP in the terminal
+- Save your session securely
 
 **Steps:**
-1. Log in to ZipRecruiter in the browser that opens
-2. Wait until you see your dashboard
-3. Press ENTER in the terminal
-4. Done! Your session is saved.
+1. The browser opens and navigates to ZipRecruiter login
+2. Your email is automatically filled in
+3. In the terminal, you'll be prompted for:
+   - Your password (typed securely, shown as ***)
+   - OTP code if 2FA is enabled (check your email/phone)
+4. Login completes automatically
+5. Session is saved for future use
+
+**Security:** Your password/OTP is only entered in the terminal and never saved!
 
 ### 5. Add Your Resume
 
