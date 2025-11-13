@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+*.js
+*.js.map
+*.d.ts
+!src/**/*.ts
+
+# Claude AI cache
+.claude/
+
+# Environment variables
+.env
+
+# Data directories (sensitive information)
+data/sessions/
+data/jobs/
+data/applications/
+data/chromadb/
+data/resume/*.pdf
+data/resume/*.docx
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+temp/
+
+# Playwright
+.playwright/
+test-results/
