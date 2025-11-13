@@ -82,7 +82,7 @@ export async function randomMouseMovement(page: Page, count: number = 3): Promis
 /**
  * Simulate reading time (pause based on content length)
  */
-export async function simulateReadingTime(contentLength: number): Promise<void> {
+export async function simulateReadingTime(page: Page, contentLength: number): Promise<void> {
   // Assume ~200 words per minute reading speed
   // Average word length is 5 characters
   const words = contentLength / 5;
