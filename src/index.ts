@@ -193,21 +193,7 @@ async function main() {
         logger.info('Processing job', { title: job.title, company: job.company });
 
         try {
-          // Quick title check
-          const titleMatch = await matcherAgent.matchTitle(job.title);
-          logger.info('Title match', {
-            title: job.title,
-            score: titleMatch.score,
-            threshold: config.titleMatchThreshold,
-          });
-
-          if (titleMatch.score < config.titleMatchThreshold) {
-            logger.info('Title match too low, skipping', { title: job.title });
-            jobsWithMatches.push({ job }); // Add to Excel even if rejected
-            continue;
-          }
-
-          // Full description analysis
+          // Full description analysis (title check disabled for targeted searches)
           matchReport = await matcherAgent.matchDescription(job);
           logger.info('Full match analysis', {
             title: job.title,
