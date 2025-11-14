@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build output
 dist/
@@ -20,8 +19,10 @@ data/sessions/
 data/jobs/
 data/applications/
 data/chromadb/
+data/browser-profile/
 data/resume/*.pdf
 data/resume/*.docx
+data/resume/*.txt
 
 # Logs
 logs/
@@ -44,12 +45,14 @@ coverage/
 # Temporary files
 *.tmp
 temp/
+sample-concept.md
 
 # Playwright
 .playwright/
 test-results/
 
-# Images
-image-1.png
-image-2.png
-image-3.png
+# Screenshots and images (temporary files)
+image.png
+image-*.png
+*.png
+!docs/**/*.png
