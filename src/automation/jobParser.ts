@@ -10,12 +10,14 @@ export class JobParser {
 
   /**
    * Extract job data from ZipRecruiter's embedded JSON
+   * Option 1: Click each job card to load full descriptions
    */
   async extractJobsFromJSON(): Promise<Partial<JobListing>[]> {
     try {
-      logger.info('Extracting jobs from page JSON data');
+      logger.info('Extracting jobs from page JSON data with full descriptions');
 
-      const jobData = await this.page.evaluate(() => {
+      // First, get all job cards from the initial page load
+      const initialJobCards = await this.page.evaluate(() => {
         const script = document.querySelector('#js_variables');
         if (!script || !script.textContent) {
           return null;
@@ -23,61 +25,160 @@ export class JobParser {
 
         try {
           const data = JSON.parse(script.textContent);
-          
-          // Also try to get the full job details if available
-          const fullJobDetails = data.getJobDetailsResponse?.jobDetails;
           const jobCards = data.hydrateJobCardsResponse?.jobCards || data.jobCards || [];
-          
-          return { jobCards, fullJobDetails };
+          return jobCards;
         } catch (e) {
           console.error('Failed to parse job data:', e);
           return null;
         }
       });
 
-      if (!jobData || !Array.isArray(jobData.jobCards)) {
+      if (!initialJobCards || !Array.isArray(initialJobCards)) {
         logger.warn('No job data found in page JSON');
         return [];
       }
 
-      logger.info(`Found ${jobData.jobCards.length} jobs in JSON data`);
+      logger.info(`Found ${initialJobCards.length} jobs in JSON data`);
 
-      const jobs: Partial<JobListing>[] = jobData.jobCards.map((job: any) => {
-        const id = this.generateJobId(
-          job.title || '',
-          job.company?.name || '',
-          job.jobRedirectPageUrl || ''
-        );
+      const jobs: Partial<JobListing>[] = [];
 
-        // Determine if it has 1-Click Apply (applyButtonType 1 = ZipRecruiter apply)
-        const hasOneClickApply = job.applyButtonConfig?.applyButtonType === 1;
+      // For each job card, click it to load full details
+      for (let i = 0; i < initialJobCards.length; i++) {
+        const job = initialJobCards[i];
+        logger.debug(`Processing job ${i + 1}/${initialJobCards.length}`, { title: job.title });
 
-        // Get full description from htmlFullDescription if this is the currently selected job
-        let description = job.shortDescription || '';
-        if (jobData.fullJobDetails && jobData.fullJobDetails.listingKey === job.listingKey) {
-          description = jobData.fullJobDetails.htmlFullDescription || job.shortDescription || '';
-          // Strip HTML tags for plain text
-          description = description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        try {
+          // Click the job card to trigger loading of full details
+          await this.clickJobCardByIndex(i);
+
+          // Wait a bit for the JS variables to update
+          await this.page.waitForTimeout(500);
+
+          // Now extract the full job details
+          const fullJobData = await this.page.evaluate((jobIndex) => {
+            const script = document.querySelector('#js_variables');
+            if (!script || !script.textContent) {
+              return null;
+            }
+
+            try {
+              const data = JSON.parse(script.textContent);
+              const jobDetails = data.getJobDetailsResponse?.jobDetails;
+              const jobCard = data.hydrateJobCardsResponse?.jobCards[jobIndex];
+
+              return { jobDetails, jobCard };
+            } catch (e) {
+              console.error('Failed to parse updated job data:', e);
+              return null;
+            }
+          }, i);
+
+          if (!fullJobData) {
+            logger.warn(`Could not get full data for job ${i + 1}`);
+            continue;
+          }
+
+          const { jobDetails, jobCard } = fullJobData;
+          const description = this.extractDescription(jobDetails);
+
+          const id = this.generateJobId(
+            jobCard.title || '',
+            jobCard.company?.name || '',
+            jobCard.jobRedirectPageUrl || ''
+          );
+
+          const hasOneClickApply = jobCard.applyButtonConfig?.applyButtonType === 1;
+
+          jobs.push({
+            id,
+            title: jobCard.title || 'Unknown Title',
+            company: jobCard.company?.name || jobCard.company?.canonicalDisplayName || 'Unknown Company',
+            location: jobCard.location?.displayName || `${jobCard.location?.city}, ${jobCard.location?.stateCode}` || 'Unknown',
+            salary: this.formatSalary(jobCard.pay),
+            postedDate: jobCard.status?.postedAtUtc || 'Unknown',
+            url: jobCard.jobRedirectPageUrl || jobCard.rawCanonicalZipJobPageUrl || '',
+            hasOneClickApply,
+            scrapedAt: new Date().toISOString(),
+            description,
+          });
+
+          logger.debug(`✅ Extracted full details for: ${jobCard.title}`);
+        } catch (error) {
+          logger.warn(`Error processing job ${i + 1}`, { error, title: job.title });
+          continue;
         }
+      }
 
-        return {
-          id,
-          title: job.title || 'Unknown Title',
-          company: job.company?.name || job.company?.canonicalDisplayName || 'Unknown Company',
-          location: job.location?.displayName || job.location?.city + ', ' + job.location?.stateCode || 'Unknown',
-          salary: this.formatSalary(job.pay),
-          postedDate: job.status?.postedAtUtc || 'Unknown',
-          url: job.jobRedirectPageUrl || job.rawCanonicalZipJobPageUrl || '',
-          hasOneClickApply,
-          scrapedAt: new Date().toISOString(),
-          description,
-        };
-      });
-
+      logger.info(`Successfully extracted ${jobs.length} jobs with full descriptions`);
       return jobs.filter(job => job.title && job.company);
     } catch (error) {
       logger.error('Failed to extract jobs from JSON', { error });
       return [];
+    }
+  }
+
+  /**
+   * Click a job card by index to load its full details
+   */
+  private async clickJobCardByIndex(index: number): Promise<void> {
+    try {
+      // Try multiple selectors for job cards
+      const jobCardSelectors = [
+        `[role="option"]`,
+        `.job_result`,
+        `.job-card`,
+        '[data-testid="job-listing"]',
+        '.job_item',
+        '[class*="JobCard"]',
+      ];
+
+      for (const selector of jobCardSelectors) {
+        try {
+          const cards = await this.page.locator(selector).all();
+          if (cards.length > index) {
+            await cards[index].scrollIntoViewIfNeeded();
+            await this.page.waitForTimeout(300);
+            await cards[index].click();
+            logger.debug(`Clicked job card at index ${index}`);
+            return;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      // Fallback: try clicking using keyboard to select the job
+      logger.warn(`Could not find job card at index ${index}, using keyboard navigation`);
+      for (let i = 0; i < index; i++) {
+        await this.page.keyboard.press('ArrowDown');
+        await this.page.waitForTimeout(100);
+      }
+      await this.page.keyboard.press('Enter');
+    } catch (error) {
+      logger.error(`Failed to click job card at index ${index}`, { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Extract description from job details
+   */
+  private extractDescription(jobDetails: any): string {
+    try {
+      if (!jobDetails) {
+        return '';
+      }
+
+      let description = jobDetails.htmlFullDescription || jobDetails.description || '';
+
+      // Strip HTML tags and clean up
+      description = description.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+      description = description.replace(/\s+/g, ' ').trim();
+
+      return description;
+    } catch (error) {
+      logger.warn('Error extracting description', { error });
+      return '';
     }
   }
 
