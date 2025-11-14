@@ -8,8 +8,6 @@ export interface JobListing {
   postedDate: string;
   url: string;
   description: string;
-  requirements?: string[];
-  benefits?: string[];
   hasOneClickApply: boolean;
   scrapedAt: string;
 }
@@ -106,9 +104,13 @@ export interface AppConfig {
   searchKeywords: string[];
   searchLocations: string[];
   searchPagesPerCombo: number;
+  maxPagesToExtract: number; // -1 means extract all pages
   titleMatchThreshold: number;
   descriptionMatchThreshold: number;
   dateFilter: 'past_day' | 'past_week' | 'past_month' | 'any_time';
+  searchRadius: number;
+  remoteFilter: 'all' | 'no_remote' | 'only_remote';
+  experienceLevel: 'all' | 'senior' | 'mid' | 'junior' | 'no_experience';
   maxApplicationsPerDay: number;
   minDelayBetweenAppsMs: number;
   maxDelayBetweenAppsMs: number;
@@ -124,6 +126,7 @@ export interface AppConfig {
   logLevel: 'error' | 'warn' | 'info' | 'debug';
   logToFile: boolean;
   claudeModel: string;
+  candidateExperienceYears: string;
 }
 
 // Browser session data

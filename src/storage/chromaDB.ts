@@ -433,6 +433,47 @@ export class ChromaDBManager {
       return { resumeChunks: 0, qaPairs: 0 };
     }
   }
+
+  /**
+   * Get all resume chunks (without embedding search)
+   */
+  async getAllResumeChunks(): Promise<ResumeChunk[]> {
+    try {
+      if (!this.resumeCollection) {
+        throw new Error('Resume collection not initialized');
+      }
+
+      logger.debug('Getting all resume chunks');
+
+      const results = await this.resumeCollection.get();
+
+      if (!results.ids || !results.documents || !results.metadatas) {
+        return [];
+      }
+
+      // Convert results to ResumeChunk objects
+      const chunks: ResumeChunk[] = [];
+      const ids = results.ids || [];
+      const documents = results.documents || [];
+      const metadatas = results.metadatas || [];
+
+      for (let i = 0; i < ids.length; i++) {
+        const metadata = metadatas[i] as any;
+        chunks.push({
+          id: ids[i],
+          text: documents[i] || '',
+          section: metadata.section,
+          metadata: metadata,
+        });
+      }
+
+      logger.debug(`Retrieved ${chunks.length} total resume chunks`);
+      return chunks;
+    } catch (error) {
+      logger.error('Failed to get all resume chunks', { error });
+      return [];
+    }
+  }
 }
 
 // Export singleton instance

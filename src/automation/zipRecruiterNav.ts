@@ -9,105 +9,64 @@ export class ZipRecruiterNavigator {
   constructor(private page: Page) {}
 
   /**
-   * Perform job search
+   * Perform job search with filters
    */
-  async search(keywords: string, location: string): Promise<void> {
+  async search(keywords: string, location: string, options?: {
+    radius?: number;
+    dateFilter?: string;
+    remoteFilter?: string;
+    experienceLevel?: string;
+  }): Promise<void> {
     try {
-      logger.info('Starting job search', { keywords, location });
+      logger.info('Starting job search', { keywords, location, options });
 
-      // Navigate to search page
-      await this.page.goto(ZIPRECRUITER_SEARCH_URL, { waitUntil: 'domcontentloaded' });
+      // Build URL with query parameters (ZipRecruiter uses URL params for filters)
+      const params = new URLSearchParams({
+        search: keywords,
+        location: location,
+      });
+
+      // Add radius filter (ZipRecruiter uses 'radius' param)
+      if (options?.radius) {
+        params.set('radius', options.radius.toString());
+      }
+
+      // Add date filter (ZipRecruiter uses 'days' param)
+      if (options?.dateFilter) {
+        const daysMap: Record<string, string> = {
+          past_day: '1',
+          past_week: '7',
+          past_month: '30',
+          any_time: '',
+        };
+        const days = daysMap[options.dateFilter];
+        if (days) {
+          params.set('days', days);
+        }
+      }
+
+      // Add remote filter (ZipRecruiter uses 'refine_by_location_type' param)
+      if (options?.remoteFilter && options.remoteFilter !== 'all') {
+        params.set('refine_by_location_type', options.remoteFilter);
+      }
+
+      // Add experience level filter (ZipRecruiter uses 'refine_by_experience_level' param)
+      if (options?.experienceLevel && options.experienceLevel !== 'all') {
+        params.set('refine_by_experience_level', options.experienceLevel);
+      }
+
+      // Navigate directly to search results with all filters applied
+      const searchUrl = `${ZIPRECRUITER_BASE_URL}/jobs-search?${params.toString()}`;
+      await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
       await pageLoadDelay();
 
-      // Fill keywords
-      logger.debug('Filling search keywords');
-      const keywordsInput = await this.findSearchKeywordsInput();
-      if (keywordsInput) {
-        await this.page.fill(keywordsInput, ''); // Clear first
-        await humanType(this.page, keywordsInput, keywords);
-        await betweenFieldsDelay();
-      }
-
-      // Fill location
-      logger.debug('Filling location');
-      const locationInput = await this.findSearchLocationInput();
-      if (locationInput) {
-        await this.page.fill(locationInput, ''); // Clear first
-        await humanType(this.page, locationInput, location);
-        await betweenFieldsDelay();
-      }
-
-      // Click search button
-      logger.debug('Clicking search button');
-      const searchButton = await this.findSearchButton();
-      if (searchButton) {
-        await humanClick(this.page, searchButton);
-      } else {
-        // Fallback: press Enter
-        await this.page.keyboard.press('Enter');
-      }
-
-      // Wait for results
-      await this.page.waitForLoadState('domcontentloaded');
-      await pageLoadDelay();
-
-      logger.info('Search completed', {
+      logger.info('Search completed with filters', {
         url: this.page.url(),
+        filters: options,
       });
     } catch (error) {
       logger.error('Search failed', { error });
       throw error;
-    }
-  }
-
-  /**
-   * Apply date filter
-   */
-  async applyDateFilter(filter: string): Promise<void> {
-    try {
-      logger.info('Applying date filter', { filter });
-
-      // Different sites use different filter mechanisms
-      // This is a placeholder - actual implementation depends on ZipRecruiter's UI
-
-      const filterMap: Record<string, string> = {
-        past_day: '1',
-        past_week: '7',
-        past_month: '30',
-        any_time: 'all',
-      };
-
-      const filterValue = filterMap[filter] || filterMap.past_week;
-
-      // Try to find and click the filter dropdown
-      const filterSelectors = [
-        'select[name="days"]',
-        '[data-test="date-filter"]',
-        'button:has-text("Date Posted")',
-      ];
-
-      for (const selector of filterSelectors) {
-        try {
-          const element = await this.page.locator(selector).first();
-          if (await element.isVisible({ timeout: 2000 })) {
-            if (selector.startsWith('select')) {
-              await this.page.selectOption(selector, filterValue);
-            } else {
-              await humanClick(this.page, selector);
-              await this.page.waitForTimeout(1000);
-              // Then select the option - this depends on the UI
-            }
-            logger.info('Date filter applied');
-            return;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      logger.warn('Could not find date filter selector');
-    } catch (error) {
-      logger.error('Failed to apply date filter', { error });
     }
   }
 

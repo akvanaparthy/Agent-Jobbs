@@ -10,8 +10,11 @@ import { qaAgent } from './agents/qaAgent';
 import { QuestionDetector } from './automation/questionDetector';
 import { rateLimiter } from './config/rateLimiter';
 import { applicationTracker } from './storage/applicationTracker';
+import { exportJobsToExcel, JobWithMatch } from './utils/excelExport';
 import { JobListing, PreparedApplication, AppliedJob } from './types';
 import * as crypto from 'crypto';
+import * as path from 'path';
+import * as fs from 'fs';
 
 async function main() {
   logger.info('='.repeat(60));
@@ -74,21 +77,22 @@ async function main() {
       for (const location of config.searchLocations) {
         logger.info('Starting job search', { keyword, location });
 
-        // Perform search for this combo
-        await navigator.search(keyword, location);
-
-        // Apply date filter per search
-        if (config.dateFilter !== 'any_time') {
-          await navigator.applyDateFilter(config.dateFilter);
-        }
+        // Perform search with all filters applied via URL params
+        await navigator.search(keyword, location, {
+          radius: config.searchRadius,
+          dateFilter: config.dateFilter,
+          remoteFilter: config.remoteFilter,
+          experienceLevel: config.experienceLevel,
+        });
 
         // Collect limited pages per combo
         let pageCount = 0;
-        const maxPages = config.searchPagesPerCombo;
+        const maxPages = config.maxPagesToExtract; // Configurable: number or -1 for all pages
+        const extractAllPages = maxPages === -1;
 
-        while (pageCount < maxPages) {
+        while (extractAllPages || pageCount < maxPages) {
           pageCount++;
-          logger.info(`Processing page ${pageCount} for`, { keyword, location });
+          logger.info(`Processing page ${pageCount}${extractAllPages ? ' (extracting all pages)' : ` of max ${maxPages}`} for`, { keyword, location });
 
           const cards = await navigator.getJobCards();
           logger.info(`Found ${cards.length} job cards`);
@@ -128,18 +132,26 @@ async function main() {
           }
 
           // Check if there's a next page for this combo
-          if (await navigator.hasNextPage() && pageCount < maxPages) {
+          if (await navigator.hasNextPage() && (extractAllPages || pageCount < maxPages)) {
             await navigator.goToNextPage();
             // Small delay between pages to avoid rate limiting
             await page.waitForTimeout(2000);
           } else {
-            logger.info('No more pages available for this combo or reached page limit');
+            const reason = !(await navigator.hasNextPage()) 
+              ? 'No more pages available' 
+              : `Reached page limit (${maxPages})`;
+            logger.info(reason + ' for this combo');
             break;
           }
         }
 
         // Optional small delay between combos
-        await page.waitForTimeout(1000);
+        try {
+          await page.waitForTimeout(1000);
+        } catch (error) {
+          logger.warn('Page closed during delay, exiting search loop', { error: error instanceof Error ? error.message : String(error) });
+          break outerLoop;
+        }
 
         // If we already have a good batch, proceed
         if (allJobs.length >= 50) break outerLoop;
@@ -153,40 +165,77 @@ async function main() {
       await jobStorage.saveJobs(allJobs);
     }
 
+    // EXPORT TO EXCEL IMMEDIATELY (before matching, so we can see the data even if matching fails)
+    logger.info('\n📊 Creating Excel export with extracted job data...');
+    try {
+      if (allJobs.length > 0) {
+        // Convert to jobsWithMatches format (without match scores for now)
+        const jobsForExport: JobWithMatch[] = allJobs.map(job => ({ job }));
+        const excelPath = await exportJobsToExcel(jobsForExport);
+        logger.info(`✅ Excel file created: ${excelPath}`);
+        logger.info(`   Open this file to see all ${allJobs.length} extracted jobs!`);
+      }
+    } catch (error) {
+      logger.error('Failed to create Excel export', { error });
+    }
+
+    // Close browser BEFORE matching (matching doesn't need browser)
+    await browserManager.close();
+    logger.info('🚪 Browser closed - now analyzing jobs with Claude AI...\n');
+
     // Match and prepare applications
     const preparedApplications: PreparedApplication[] = [];
+    const jobsWithMatches: JobWithMatch[] = [];
 
     for (const job of allJobs) {
+      let matchReport: any = undefined;
       try {
         logger.info('Processing job', { title: job.title, company: job.company });
 
-        // Quick title check
-        const titleMatch = await matcherAgent.matchTitle(job.title);
-        logger.info('Title match', {
-          title: job.title,
-          score: titleMatch.score,
-          threshold: config.titleMatchThreshold,
-        });
+        try {
+          // Quick title check
+          const titleMatch = await matcherAgent.matchTitle(job.title);
+          logger.info('Title match', {
+            title: job.title,
+            score: titleMatch.score,
+            threshold: config.titleMatchThreshold,
+          });
 
-        if (titleMatch.score < config.titleMatchThreshold) {
-          logger.info('Title match too low, skipping', { title: job.title });
-          continue;
-        }
+          if (titleMatch.score < config.titleMatchThreshold) {
+            logger.info('Title match too low, skipping', { title: job.title });
+            jobsWithMatches.push({ job }); // Add to Excel even if rejected
+            continue;
+          }
 
-        // Full description analysis
-        const matchReport = await matcherAgent.matchDescription(job);
-        logger.info('Full match analysis', {
-          title: job.title,
-          overallScore: matchReport.overallScore,
-          threshold: config.descriptionMatchThreshold,
-        });
+          // Full description analysis
+          matchReport = await matcherAgent.matchDescription(job);
+          logger.info('Full match analysis', {
+            title: job.title,
+            overallScore: matchReport.overallScore,
+            threshold: config.descriptionMatchThreshold,
+          });
 
-        if (matchReport.overallScore < config.descriptionMatchThreshold) {
-          logger.info('Overall match too low, skipping', { title: job.title });
-          continue;
+          jobsWithMatches.push({ job, match: matchReport }); // Add matched job
+
+          if (matchReport.overallScore < config.descriptionMatchThreshold) {
+            logger.info('Overall match too low, skipping', { title: job.title });
+            continue;
+          }
+        } catch (matchError) {
+          logger.warn('Matcher agent error, skipping matching for this job', {
+            title: job.title,
+            error: matchError instanceof Error ? matchError.message : String(matchError),
+          });
+          jobsWithMatches.push({ job }); // Add to Excel without match score
+          continue; // Skip to next job instead of failing entire flow
         }
 
         // Job matches! Now detect and answer questions
+        if (!matchReport) {
+          logger.warn('No match report available, skipping application for', { title: job.title });
+          continue;
+        }
+
         logger.info('Job matches! Preparing application', { title: job.title });
 
         // Navigate to job page
@@ -249,6 +298,37 @@ async function main() {
 
     logger.info(`\nPrepared ${preparedApplications.length} applications`);
 
+    // Save prepared applications to disk
+    if (preparedApplications.length > 0) {
+      try {
+        const preparedDir = path.join(process.cwd(), 'data', 'applications', 'prepared');
+        if (!fs.existsSync(preparedDir)) {
+          fs.mkdirSync(preparedDir, { recursive: true });
+        }
+        
+        const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+        const preparedFilePath = path.join(preparedDir, `prepared-${timestamp}.json`);
+        fs.writeFileSync(preparedFilePath, JSON.stringify(preparedApplications, null, 2));
+        
+        logger.info('✅ Prepared applications saved', {
+          file: preparedFilePath,
+          count: preparedApplications.length,
+        });
+      } catch (error) {
+        logger.error('Failed to save prepared applications', { error });
+      }
+    }
+
+    // Export all jobs to Excel BEFORE attempting further processing
+    try {
+      if (jobsWithMatches.length > 0) {
+        const excelPath = await exportJobsToExcel(jobsWithMatches);
+        logger.info(`✓ Excel export saved to: ${excelPath}`);
+      }
+    } catch (error) {
+      logger.error('Failed to create Excel export', { error });
+    }
+
     // Display summary
     if (preparedApplications.length > 0) {
       logger.info('\n' + '='.repeat(60));
@@ -276,14 +356,20 @@ async function main() {
       logger.info('Try adjusting your search keywords or thresholds.');
     }
 
-    // Clean up
-    await browserManager.close();
-
     logger.info('\n✓ Session complete!');
 
   } catch (error) {
     logger.error('Fatal error', { error });
-    await browserManager.close();
+    console.error('FATAL ERROR DETAILS:', error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+    
+    // Ensure browser is closed on error
+    try {
+      await browserManager.close();
+    } catch (closeError) {
+      // Ignore close errors
+    }
+    
     process.exit(1);
   }
 }

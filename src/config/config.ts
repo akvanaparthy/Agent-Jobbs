@@ -12,9 +12,19 @@ const configSchema = z.object({
   searchKeywords: z.string().min(1).transform(str => str.split(/[;,]/).map(s => s.trim()).filter(Boolean)),
   searchLocations: z.string().min(1).transform(str => str.split(/[;,]/).map(s => s.trim()).filter(Boolean)),
   searchPagesPerCombo: z.string().transform(Number).pipe(z.number().positive()),
+  maxPagesToExtract: z.string().transform(str => {
+    const lower = str.toLowerCase().trim();
+    if (lower === 'all' || lower === 'unlimited') return -1;
+    const num = Number(str);
+    if (isNaN(num) || num < 1) return 15; // Default to 15 if invalid
+    return num;
+  }).pipe(z.number()),
   titleMatchThreshold: z.string().transform(Number).pipe(z.number().min(0).max(1)),
   descriptionMatchThreshold: z.string().transform(Number).pipe(z.number().min(0).max(1)),
   dateFilter: z.enum(['past_day', 'past_week', 'past_month', 'any_time']),
+  searchRadius: z.string().transform(Number).pipe(z.number().positive()).optional().default('25'),
+  remoteFilter: z.enum(['all', 'no_remote', 'only_remote']).optional().default('all'),
+  experienceLevel: z.enum(['all', 'senior', 'mid', 'junior', 'no_experience']).optional().default('all'),
   maxApplicationsPerDay: z.string().transform(Number).pipe(z.number().positive()),
   minDelayBetweenAppsMs: z.string().transform(Number).pipe(z.number().positive()),
   maxDelayBetweenAppsMs: z.string().transform(Number).pipe(z.number().positive()),
@@ -30,6 +40,7 @@ const configSchema = z.object({
   logLevel: z.enum(['error', 'warn', 'info', 'debug']),
   logToFile: z.string().transform(str => str.toLowerCase() === 'true'),
   claudeModel: z.string().min(1),
+  candidateExperienceYears: z.string().optional().default('0-3'),
 });
 
 // Load and validate configuration
@@ -40,9 +51,13 @@ function loadConfig(): AppConfig {
     // Prefer SEARCH_LOCATIONS; fall back to SEARCH_LOCATION for backward compatibility
     searchLocations: process.env.SEARCH_LOCATIONS || process.env.SEARCH_LOCATION || 'San Francisco, CA',
     searchPagesPerCombo: process.env.SEARCH_PAGES_PER_COMBO || '1',
+    maxPagesToExtract: process.env.MAX_PAGES_TO_EXTRACT || '15',
     titleMatchThreshold: process.env.TITLE_MATCH_THRESHOLD || '0.6',
     descriptionMatchThreshold: process.env.DESCRIPTION_MATCH_THRESHOLD || '0.7',
     dateFilter: process.env.DATE_FILTER || 'past_week',
+    searchRadius: process.env.SEARCH_RADIUS || '25',
+    remoteFilter: process.env.REMOTE_FILTER || 'all',
+    experienceLevel: process.env.EXPERIENCE_LEVEL || 'all',
     maxApplicationsPerDay: process.env.MAX_APPLICATIONS_PER_DAY || '30',
     minDelayBetweenAppsMs: process.env.MIN_DELAY_BETWEEN_APPS_MS || '480000',
     maxDelayBetweenAppsMs: process.env.MAX_DELAY_BETWEEN_APPS_MS || '1200000',
@@ -58,6 +73,7 @@ function loadConfig(): AppConfig {
     logLevel: process.env.LOG_LEVEL || 'info',
     logToFile: process.env.LOG_TO_FILE || 'true',
     claudeModel: process.env.CLAUDE_MODEL || 'claude-3-5-haiku-20241022',
+    candidateExperienceYears: process.env.CANDIDATE_EXPERIENCE_YEARS || '0-3',
   };
 
   try {

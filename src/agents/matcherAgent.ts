@@ -104,6 +104,9 @@ Return ONLY the JSON object, no other text.`;
 
       const prompt = `You are an expert job matching analyst. Analyze how well this job matches the candidate's profile.
 
+CANDIDATE EXPERIENCE LEVEL: ${config.candidateExperienceYears} years
+The candidate is willing to apply to jobs that require slightly more experience if the role is a good match.
+
 JOB INFORMATION:
 Title: ${job.title}
 Company: ${job.company}
@@ -112,8 +115,6 @@ ${job.salary ? `Salary: ${job.salary}` : ''}
 
 Job Description:
 ${job.description}
-
-${job.requirements ? `\nRequirements:\n${job.requirements.join('\n')}` : ''}
 
 CANDIDATE RESUME:
 ${resumeContext}
@@ -135,7 +136,11 @@ Scoring criteria:
 - overallScore: Holistic assessment of fit (0.0 = no match, 1.0 = perfect match)
 - titleMatch: How well job title aligns with candidate's roles
 - skillsMatch: Technical skills overlap
-- experienceMatch: Years of experience and seniority level fit
+- experienceMatch: Evaluate if the job's experience requirements (if stated) align with ${config.candidateExperienceYears} years. 
+  * If job requires 0-3 years and candidate has 1-3 years: score 0.9-1.0
+  * If job requires 3-5 years and candidate has 1-3 years: score 0.7-0.8 (acceptable stretch)
+  * If job requires 5+ years and candidate has 1-3 years: score 0.3-0.5 (significant gap)
+  * If experience not clearly stated: score based on job level indicators (junior/mid/senior keywords)
 
 Be thorough but concise. Return ONLY the JSON object.`;
 

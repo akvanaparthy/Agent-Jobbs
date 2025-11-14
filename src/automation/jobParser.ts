@@ -10,14 +10,14 @@ export class JobParser {
 
   /**
    * Extract job data from ZipRecruiter's embedded JSON
-   * Option 1: Click each job card to load full descriptions
+   * Gets full descriptions by appending ?lk=listingKey to URL (no clicking needed)
    */
   async extractJobsFromJSON(): Promise<Partial<JobListing>[]> {
     try {
-      logger.info('Extracting jobs from page JSON data with full descriptions');
+      logger.info('Extracting jobs from page JSON data');
 
-      // First, get all job cards from the initial page load
-      const initialJobCards = await this.page.evaluate(() => {
+      // Extract all job cards from the page
+      const jobCards = await this.page.evaluate(() => {
         const script = document.querySelector('#js_variables');
         if (!script || !script.textContent) {
           return null;
@@ -25,160 +25,111 @@ export class JobParser {
 
         try {
           const data = JSON.parse(script.textContent);
-          const jobCards = data.hydrateJobCardsResponse?.jobCards || data.jobCards || [];
-          return jobCards;
+          return data.hydrateJobCardsResponse?.jobCards || data.jobCards || [];
         } catch (e) {
           console.error('Failed to parse job data:', e);
           return null;
         }
       });
 
-      if (!initialJobCards || !Array.isArray(initialJobCards)) {
+      if (!jobCards || !Array.isArray(jobCards)) {
         logger.warn('No job data found in page JSON');
         return [];
       }
 
-      logger.info(`Found ${initialJobCards.length} jobs in JSON data`);
+      logger.info(`Found ${jobCards.length} jobs in JSON data`);
 
       const jobs: Partial<JobListing>[] = [];
+      const currentUrl = this.page.url();
 
-      // For each job card, click it to load full details
-      for (let i = 0; i < initialJobCards.length; i++) {
-        const job = initialJobCards[i];
-        logger.debug(`Processing job ${i + 1}/${initialJobCards.length}`, { title: job.title });
-
+      // Process each job card
+      for (const job of jobCards) {
         try {
-          // Click the job card to trigger loading of full details
-          await this.clickJobCardByIndex(i);
-
-          // Wait a bit for the JS variables to update
-          await this.page.waitForTimeout(500);
-
-          // Now extract the full job details
-          const fullJobData = await this.page.evaluate((jobIndex) => {
-            const script = document.querySelector('#js_variables');
-            if (!script || !script.textContent) {
-              return null;
-            }
-
-            try {
-              const data = JSON.parse(script.textContent);
-              const jobDetails = data.getJobDetailsResponse?.jobDetails;
-              const jobCard = data.hydrateJobCardsResponse?.jobCards[jobIndex];
-
-              return { jobDetails, jobCard };
-            } catch (e) {
-              console.error('Failed to parse updated job data:', e);
-              return null;
-            }
-          }, i);
-
-          if (!fullJobData) {
-            logger.warn(`Could not get full data for job ${i + 1}`);
-            continue;
-          }
-
-          const { jobDetails, jobCard } = fullJobData;
-          const description = this.extractDescription(jobDetails);
-
+          // Generate ID for deduplication
           const id = this.generateJobId(
-            jobCard.title || '',
-            jobCard.company?.name || '',
-            jobCard.jobRedirectPageUrl || ''
+            job.title || '',
+            job.company?.name || '',
+            job.jobRedirectPageUrl || ''
           );
 
-          const hasOneClickApply = jobCard.applyButtonConfig?.applyButtonType === 1;
+          // Check if it has 1-Click Apply
+          const hasOneClickApply = job.applyButtonConfig?.applyButtonType === 1;
+
+          // Load full description by appending ?lk=listingKey to URL
+          let fullDescription = job.shortDescription || '';
+          
+          try {
+            const listingKey = job.listingKey;
+            if (listingKey) {
+              // Append lk parameter to current URL to load this job's details
+              const detailUrl = `${currentUrl}${currentUrl.includes('?') ? '&' : '?'}lk=${listingKey}`;
+              await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+              
+              // Wait a bit for JS to update
+              await this.page.waitForTimeout(500);
+              
+              // Extract the full description from the updated JSON
+              const fullDescData = await this.page.evaluate(() => {
+                const script = document.querySelector('#js_variables');
+                if (!script || !script.textContent) {
+                  return null;
+                }
+
+                try {
+                  const data = JSON.parse(script.textContent);
+                  return data.getJobDetailsResponse?.jobDetails?.htmlFullDescription || null;
+                } catch (e) {
+                  return null;
+                }
+              });
+
+              if (fullDescData) {
+                fullDescription = fullDescData;
+              }
+            }
+          } catch (error) {
+            logger.warn(`Could not load full description for job ${job.title}`, { error: String(error) });
+            // Fall back to shortDescription
+          }
+
+          // Clean up HTML
+          let cleanDescription = fullDescription || '';
+          if (cleanDescription) {
+            cleanDescription = cleanDescription
+              .replace(/<[^>]*>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/\s+/g, ' ')
+              .trim();
+          }
 
           jobs.push({
             id,
-            title: jobCard.title || 'Unknown Title',
-            company: jobCard.company?.name || jobCard.company?.canonicalDisplayName || 'Unknown Company',
-            location: jobCard.location?.displayName || `${jobCard.location?.city}, ${jobCard.location?.stateCode}` || 'Unknown',
-            salary: this.formatSalary(jobCard.pay),
-            postedDate: jobCard.status?.postedAtUtc || 'Unknown',
-            url: jobCard.jobRedirectPageUrl || jobCard.rawCanonicalZipJobPageUrl || '',
+            title: job.title || 'Unknown Title',
+            company: job.company?.name || job.company?.canonicalDisplayName || 'Unknown Company',
+            location: job.location?.displayName || 
+              (job.location?.city ? `${job.location.city}, ${job.location.stateCode}` : 'Unknown'),
+            salary: this.formatSalary(job.pay),
+            postedDate: job.status?.postedAtUtc || 'Unknown',
+            url: job.jobRedirectPageUrl || job.rawCanonicalZipJobPageUrl || '',
             hasOneClickApply,
             scrapedAt: new Date().toISOString(),
-            description,
+            description: cleanDescription,
           });
-
-          logger.debug(`✅ Extracted full details for: ${jobCard.title}`);
         } catch (error) {
-          logger.warn(`Error processing job ${i + 1}`, { error, title: job.title });
+          logger.warn('Error processing job', { error, title: job.title });
           continue;
         }
       }
 
-      logger.info(`Successfully extracted ${jobs.length} jobs with full descriptions`);
+      logger.info(`Successfully extracted ${jobs.length} jobs`);
       return jobs.filter(job => job.title && job.company);
     } catch (error) {
       logger.error('Failed to extract jobs from JSON', { error });
       return [];
-    }
-  }
-
-  /**
-   * Click a job card by index to load its full details
-   */
-  private async clickJobCardByIndex(index: number): Promise<void> {
-    try {
-      // Try multiple selectors for job cards
-      const jobCardSelectors = [
-        `[role="option"]`,
-        `.job_result`,
-        `.job-card`,
-        '[data-testid="job-listing"]',
-        '.job_item',
-        '[class*="JobCard"]',
-      ];
-
-      for (const selector of jobCardSelectors) {
-        try {
-          const cards = await this.page.locator(selector).all();
-          if (cards.length > index) {
-            await cards[index].scrollIntoViewIfNeeded();
-            await this.page.waitForTimeout(300);
-            await cards[index].click();
-            logger.debug(`Clicked job card at index ${index}`);
-            return;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // Fallback: try clicking using keyboard to select the job
-      logger.warn(`Could not find job card at index ${index}, using keyboard navigation`);
-      for (let i = 0; i < index; i++) {
-        await this.page.keyboard.press('ArrowDown');
-        await this.page.waitForTimeout(100);
-      }
-      await this.page.keyboard.press('Enter');
-    } catch (error) {
-      logger.error(`Failed to click job card at index ${index}`, { error });
-      throw error;
-    }
-  }
-
-  /**
-   * Extract description from job details
-   */
-  private extractDescription(jobDetails: any): string {
-    try {
-      if (!jobDetails) {
-        return '';
-      }
-
-      let description = jobDetails.htmlFullDescription || jobDetails.description || '';
-
-      // Strip HTML tags and clean up
-      description = description.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-      description = description.replace(/\s+/g, ' ').trim();
-
-      return description;
-    } catch (error) {
-      logger.warn('Error extracting description', { error });
-      return '';
     }
   }
 
@@ -294,8 +245,6 @@ export class JobParser {
         return {
           ...job,
           description: job.description || 'No description available',
-          requirements: job.requirements,
-          benefits: job.benefits,
           hasOneClickApply: job.hasOneClickApply || false,
         } as JobListing;
       }
@@ -314,12 +263,6 @@ export class JobParser {
       // Extract job description
       const description = await this.extractJobDescription();
 
-      // Extract requirements
-      const requirements = await this.extractRequirements();
-
-      // Extract benefits
-      const benefits = await this.extractBenefits();
-
       // Update salary if not found earlier
       if (!job.salary) {
         job.salary = await this.extractText(this.page, [
@@ -336,8 +279,6 @@ export class JobParser {
       return {
         ...job,
         description: description || 'No description available',
-        requirements,
-        benefits,
         hasOneClickApply: hasOneClickApply || job.hasOneClickApply || false,
       } as JobListing;
     } catch (error) {
