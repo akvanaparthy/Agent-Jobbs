@@ -11,7 +11,8 @@
     "auth:profile": "ts-node src/scripts/setupBrowserProfile.ts",
     "resume:process": "ts-node src/scripts/processResume.ts",
     "jobs:find": "ts-node src/scripts/findJobs.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:api": "ts-node src/scripts/testAPIs.ts"
   },
   "keywords": [
     "job-application",

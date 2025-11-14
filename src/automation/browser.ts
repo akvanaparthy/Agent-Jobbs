@@ -22,13 +22,36 @@ export class BrowserManager {
       });
 
       if (config.usePersistentContext) {
-        // Use persistent browser context (avoids Cloudflare challenges)
+        /**
+         * PERSISTENT CONTEXT MODE (Recommended)
+         *
+         * Uses a real browser profile saved to disk (data/browser-profile/).
+         * This provides several advantages:
+         *
+         * 1. Cloudflare Challenge Bypass:
+         *    - Cookies persist between runs, so Cloudflare recognizes the "browser"
+         *    - No need to solve challenges repeatedly
+         *
+         * 2. Minimal Stealth Needed:
+         *    - Real browser fingerprints (stored in profile) are more convincing than fake ones
+         *    - No need for heavy navigator.webdriver masking
+         *    - Chrome args (--disable-blink-features) provide basic automation hiding
+         *
+         * 3. Behavioral Detection Prevention:
+         *    - Human-like delays (2-5 seconds) in humanBehavior.ts are still essential
+         *    - Timing-based detection can still catch bots regardless of fingerprints
+         *
+         * Note: This does NOT call applyStealthTechniques() because:
+         * - The browser profile already has consistent fingerprints
+         * - Fake navigator properties would conflict with the real stored profile
+         * - Chrome args provide sufficient automation detection hiding
+         */
         const userDataDir = path.resolve(process.cwd(), 'data', 'browser-profile');
-        
+
         this.context = await chromium.launchPersistentContext(userDataDir, {
           headless: config.headless,
           args: [
-            '--disable-blink-features=AutomationControlled',
+            '--disable-blink-features=AutomationControlled', // Primary automation detection hiding
             '--disable-dev-shm-usage',
             '--no-first-run',
             '--no-default-browser-check',
@@ -37,7 +60,7 @@ export class BrowserManager {
             '--no-sandbox',
             '--disable-setuid-sandbox',
           ],
-          ignoreDefaultArgs: ['--enable-automation'],
+          ignoreDefaultArgs: ['--enable-automation'], // Remove automation flag
           viewport: { width: 1920, height: 1080 },
         });
 
@@ -45,7 +68,7 @@ export class BrowserManager {
         this.page = this.context.pages()[0] || await this.context.newPage();
         this.page.setDefaultTimeout(config.browserTimeout);
 
-        logger.info('Browser launched with persistent context');
+        logger.info('Browser launched with persistent context (minimal stealth needed)');
 
         return {
           browser: null as any, // Persistent context doesn't have separate browser object
@@ -53,7 +76,21 @@ export class BrowserManager {
           page: this.page,
         };
       } else {
-        // Regular browser launch with cookies
+        /**
+         * NON-PERSISTENT CONTEXT MODE (Fallback)
+         *
+         * Used when persistent profile is not available or for testing.
+         * Requires FULL stealth measures:
+         *
+         * 1. Chrome args to hide automation
+         * 2. applyStealthTechniques() to mask navigator.webdriver and other bot signals
+         * 3. Human-like delays (same as persistent mode)
+         *
+         * Drawbacks:
+         * - Cloudflare challenges must be solved every run
+         * - More complex stealth scripts needed
+         * - Less "real" than persistent profile
+         */
         this.browser = await chromium.launch({
           headless: config.headless,
           args: [
@@ -73,12 +110,12 @@ export class BrowserManager {
           ignoreDefaultArgs: ['--enable-automation'],
         });
 
-        // Create stealth context
+        // Create stealth context with navigator masking (needed without persistent profile)
         this.context = await createStealthContext(this.browser);
         this.page = await this.context.newPage();
         this.page.setDefaultTimeout(config.browserTimeout);
 
-        logger.info('Browser launched successfully');
+        logger.info('Browser launched with non-persistent context (full stealth applied)');
 
         return {
           browser: this.browser,

@@ -174,37 +174,12 @@ export async function createStealthContext(
 }
 
 /**
- * Add random noise to mouse movements
+ * REMOVED FUNCTIONS (Dead Code):
+ *
+ * - addMouseNoise(): Redundant with humanClick() in humanBehavior.ts (already does random positioning)
+ * - simulatePageLoad(): Never called in codebase; Playwright's waitForLoadState() is sufficient
+ *
+ * If you need these functions, use:
+ * - For mouse noise: See humanClick() in src/utils/humanBehavior.ts (line 28)
+ * - For page load: Use page.waitForLoadState('networkidle') directly
  */
-export function addMouseNoise(x: number, y: number, maxNoise: number = 5): { x: number; y: number } {
-  const noiseX = (Math.random() - 0.5) * maxNoise * 2;
-  const noiseY = (Math.random() - 0.5) * maxNoise * 2;
-
-  return {
-    x: x + noiseX,
-    y: y + noiseY,
-  };
-}
-
-/**
- * Simulate human-like page load behavior
- */
-export async function simulatePageLoad(page: Page): Promise<void> {
-  // Wait for page to be somewhat loaded
-  await page.waitForLoadState('domcontentloaded');
-
-  // Simulate reading the page title
-  await page.waitForTimeout(500 + Math.random() * 1000);
-
-  // Small random scroll
-  await page.evaluate(() => {
-    window.scrollBy(0, Math.random() * 200);
-  });
-
-  await page.waitForTimeout(300 + Math.random() * 700);
-
-  // Wait for network to be mostly idle
-  await page.waitForLoadState('networkidle').catch(() => {
-    // Ignore timeout, continue anyway
-  });
-}
