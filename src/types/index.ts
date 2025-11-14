@@ -104,7 +104,8 @@ export interface QAPair {
 export interface AppConfig {
   anthropicApiKey: string;
   searchKeywords: string[];
-  searchLocation: string;
+  searchLocations: string[];
+  searchPagesPerCombo: number;
   titleMatchThreshold: number;
   descriptionMatchThreshold: number;
   dateFilter: 'past_day' | 'past_week' | 'past_month' | 'any_time';

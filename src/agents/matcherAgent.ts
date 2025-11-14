@@ -20,7 +20,7 @@ export class MatcherAgent {
    */
   async matchTitle(jobTitle: string): Promise<{ score: number; reasoning: string }> {
     try {
-      logger.debug('Matching job title', { jobTitle });
+      logger.info('🤖 Analyzing job title match...', { jobTitle });
 
       // Get resume chunks for context
       const resumeChunks = await chromaDB.searchResumeChunks(jobTitle, 3);
@@ -57,8 +57,10 @@ Scoring guide:
 
 Return ONLY the JSON object, no other text.`;
 
+      logger.info('📡 Calling Claude AI for title analysis...');
       const response = await (this.model as any).invoke(prompt);
       const content = response.content.toString();
+      logger.info('✅ Title analysis complete');
 
       // Parse JSON response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -85,7 +87,7 @@ Return ONLY the JSON object, no other text.`;
    */
   async matchDescription(job: JobListing): Promise<MatchReport> {
     try {
-      logger.info('Analyzing job description', { jobId: job.id, title: job.title });
+      logger.info('🔍 Analyzing full job description...', { jobId: job.id, title: job.title });
 
       // Get relevant resume chunks based on job description
       const resumeChunks = await chromaDB.searchResumeChunks(
@@ -137,8 +139,10 @@ Scoring criteria:
 
 Be thorough but concise. Return ONLY the JSON object.`;
 
+      logger.info('📡 Calling Claude AI for detailed analysis (this may take 10-20 seconds)...');
       const response = await (this.model as any).invoke(prompt);
       const content = response.content.toString();
+      logger.info('✅ Detailed analysis complete');
 
       // Parse JSON response
       const jsonMatch = content.match(/\{[\s\S]*\}/);

@@ -9,8 +9,9 @@ dotenv.config();
 // Zod schema for configuration validation
 const configSchema = z.object({
   anthropicApiKey: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
-  searchKeywords: z.string().min(1).transform(str => str.split(',').map(s => s.trim())),
-  searchLocation: z.string().min(1),
+  searchKeywords: z.string().min(1).transform(str => str.split(/[;,]/).map(s => s.trim()).filter(Boolean)),
+  searchLocations: z.string().min(1).transform(str => str.split(/[;,]/).map(s => s.trim()).filter(Boolean)),
+  searchPagesPerCombo: z.string().transform(Number).pipe(z.number().positive()),
   titleMatchThreshold: z.string().transform(Number).pipe(z.number().min(0).max(1)),
   descriptionMatchThreshold: z.string().transform(Number).pipe(z.number().min(0).max(1)),
   dateFilter: z.enum(['past_day', 'past_week', 'past_month', 'any_time']),
@@ -36,7 +37,9 @@ function loadConfig(): AppConfig {
   const rawConfig = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     searchKeywords: process.env.SEARCH_KEYWORDS || 'software engineer',
-    searchLocation: process.env.SEARCH_LOCATION || 'San Francisco, CA',
+    // Prefer SEARCH_LOCATIONS; fall back to SEARCH_LOCATION for backward compatibility
+    searchLocations: process.env.SEARCH_LOCATIONS || process.env.SEARCH_LOCATION || 'San Francisco, CA',
+    searchPagesPerCombo: process.env.SEARCH_PAGES_PER_COMBO || '1',
     titleMatchThreshold: process.env.TITLE_MATCH_THRESHOLD || '0.6',
     descriptionMatchThreshold: process.env.DESCRIPTION_MATCH_THRESHOLD || '0.7',
     dateFilter: process.env.DATE_FILTER || 'past_week',

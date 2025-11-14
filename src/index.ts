@@ -66,80 +66,87 @@ async function main() {
     const navigator = new ZipRecruiterNavigator(page);
     const parser = new JobParser(page);
 
-    // Perform job search
-    logger.info('Starting job search', {
-      keywords: config.searchKeywords.join(', '),
-      location: config.searchLocation,
-    });
-
-    await navigator.search(
-      config.searchKeywords.join(', '),
-      config.searchLocation
-    );
-
-    // Apply date filter
-    if (config.dateFilter !== 'any_time') {
-      await navigator.applyDateFilter(config.dateFilter);
-    }
-
-    // Collect jobs from multiple pages
+    // Rotational search across keyword × location combinations
     const allJobs: JobListing[] = [];
-    let pageCount = 0;
-    const maxPages = 3; // Limit to 3 pages for MVP
 
-    while (pageCount < maxPages) {
-      pageCount++;
-      logger.info(`Processing page ${pageCount}`);
+    outerLoop:
+    for (const keyword of config.searchKeywords) {
+      for (const location of config.searchLocations) {
+        logger.info('Starting job search', { keyword, location });
 
-      const cards = await navigator.getJobCards();
-      logger.info(`Found ${cards.length} job cards`);
+        // Perform search for this combo
+        await navigator.search(keyword, location);
 
-      for (const card of cards) {
-        try {
-          // Parse basic info from card
-          const jobInfo = await parser.parseJobCard(card);
+        // Apply date filter per search
+        if (config.dateFilter !== 'any_time') {
+          await navigator.applyDateFilter(config.dateFilter);
+        }
 
-          if (!jobInfo) continue;
+        // Collect limited pages per combo
+        let pageCount = 0;
+        const maxPages = config.searchPagesPerCombo;
 
-          // Only process 1-Click Apply jobs
-          if (!jobInfo.hasOneClickApply) {
-            logger.debug('Skipping non-1-Click Apply job', { title: jobInfo.title });
-            continue;
-          }
+        while (pageCount < maxPages) {
+          pageCount++;
+          logger.info(`Processing page ${pageCount} for`, { keyword, location });
 
-          // Navigate to job detail page and get full info
-          if (jobInfo.url) {
-            const fullJob = await parser.parseJobDetail(jobInfo);
-            if (fullJob) {
-              allJobs.push(fullJob);
-              logger.info('Job added to list', {
-                title: fullJob.title,
-                company: fullJob.company,
-              });
+          const cards = await navigator.getJobCards();
+          logger.info(`Found ${cards.length} job cards`);
+
+          // Extract jobs from JSON data instead of parsing HTML elements
+          const jobs = await parser.extractJobsFromJSON();
+          logger.info(`Extracted ${jobs.length} jobs from page`);
+
+          for (const jobInfo of jobs) {
+            try {
+              if (!jobInfo) continue;
+
+              // Only process 1-Click Apply jobs
+              if (!jobInfo.hasOneClickApply) {
+                logger.debug('Skipping non-1-Click Apply job', { title: jobInfo.title });
+                continue;
+              }
+
+              // Use description from JSON - no need to navigate to each job page!
+              const fullJob = await parser.parseJobDetail(jobInfo);
+              if (fullJob) {
+                allJobs.push(fullJob);
+                logger.info('Job added to list', {
+                  title: fullJob.title,
+                  company: fullJob.company,
+                });
+              }
+
+              // Limit total jobs across entire run
+              if (allJobs.length >= 50) {
+                logger.info('Reached job limit (50)');
+                break outerLoop;
+              }
+            } catch (error) {
+              logger.error('Error processing job card', { error });
             }
           }
 
-          // Limit total jobs to avoid overwhelming
-          if (allJobs.length >= 20) {
-            logger.info('Reached job limit (20)');
+          // Check if there's a next page for this combo
+          if (await navigator.hasNextPage() && pageCount < maxPages) {
+            await navigator.goToNextPage();
+            // Small delay between pages to avoid rate limiting
+            await page.waitForTimeout(2000);
+          } else {
+            logger.info('No more pages available for this combo or reached page limit');
             break;
           }
-        } catch (error) {
-          logger.error('Error processing job card', { error });
         }
-      }
 
-      if (allJobs.length >= 20) break;
+        // Optional small delay between combos
+        await page.waitForTimeout(1000);
 
-      // Check if there's a next page
-      if (await navigator.hasNextPage()) {
-        await navigator.goToNextPage();
-      } else {
-        break;
+        // If we already have a good batch, proceed
+        if (allJobs.length >= 50) break outerLoop;
       }
     }
 
-    logger.info(`Collected ${allJobs.length} 1-Click Apply jobs`);
+    logger.info(`Collected ${allJobs.length} 1-Click Apply jobs in rotational search`);
 
     // Save jobs to storage
     if (allJobs.length > 0) {

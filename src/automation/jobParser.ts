@@ -9,6 +9,106 @@ export class JobParser {
   constructor(private page: Page) {}
 
   /**
+   * Extract job data from ZipRecruiter's embedded JSON
+   */
+  async extractJobsFromJSON(): Promise<Partial<JobListing>[]> {
+    try {
+      logger.info('Extracting jobs from page JSON data');
+
+      const jobData = await this.page.evaluate(() => {
+        const script = document.querySelector('#js_variables');
+        if (!script || !script.textContent) {
+          return null;
+        }
+
+        try {
+          const data = JSON.parse(script.textContent);
+          
+          // Also try to get the full job details if available
+          const fullJobDetails = data.getJobDetailsResponse?.jobDetails;
+          const jobCards = data.hydrateJobCardsResponse?.jobCards || data.jobCards || [];
+          
+          return { jobCards, fullJobDetails };
+        } catch (e) {
+          console.error('Failed to parse job data:', e);
+          return null;
+        }
+      });
+
+      if (!jobData || !Array.isArray(jobData.jobCards)) {
+        logger.warn('No job data found in page JSON');
+        return [];
+      }
+
+      logger.info(`Found ${jobData.jobCards.length} jobs in JSON data`);
+
+      const jobs: Partial<JobListing>[] = jobData.jobCards.map((job: any) => {
+        const id = this.generateJobId(
+          job.title || '',
+          job.company?.name || '',
+          job.jobRedirectPageUrl || ''
+        );
+
+        // Determine if it has 1-Click Apply (applyButtonType 1 = ZipRecruiter apply)
+        const hasOneClickApply = job.applyButtonConfig?.applyButtonType === 1;
+
+        // Get full description from htmlFullDescription if this is the currently selected job
+        let description = job.shortDescription || '';
+        if (jobData.fullJobDetails && jobData.fullJobDetails.listingKey === job.listingKey) {
+          description = jobData.fullJobDetails.htmlFullDescription || job.shortDescription || '';
+          // Strip HTML tags for plain text
+          description = description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        return {
+          id,
+          title: job.title || 'Unknown Title',
+          company: job.company?.name || job.company?.canonicalDisplayName || 'Unknown Company',
+          location: job.location?.displayName || job.location?.city + ', ' + job.location?.stateCode || 'Unknown',
+          salary: this.formatSalary(job.pay),
+          postedDate: job.status?.postedAtUtc || 'Unknown',
+          url: job.jobRedirectPageUrl || job.rawCanonicalZipJobPageUrl || '',
+          hasOneClickApply,
+          scrapedAt: new Date().toISOString(),
+          description,
+        };
+      });
+
+      return jobs.filter(job => job.title && job.company);
+    } catch (error) {
+      logger.error('Failed to extract jobs from JSON', { error });
+      return [];
+    }
+  }
+
+  /**
+   * Format salary information
+   */
+  private formatSalary(pay: any): string | undefined {
+    if (!pay) return undefined;
+
+    try {
+      const min = pay.min || pay.minAnnual;
+      const max = pay.max || pay.maxAnnual;
+      const currency = '$'; // Assuming USD
+
+      if (pay.interval === 1) {
+        // Hourly
+        return `${currency}${min}-${currency}${max}/hr`;
+      } else if (pay.interval === 5) {
+        // Annual
+        return `${currency}${min?.toLocaleString()}-${currency}${max?.toLocaleString()}/year`;
+      } else if (min && max) {
+        return `${currency}${min?.toLocaleString()}-${currency}${max?.toLocaleString()}`;
+      }
+    } catch (e) {
+      // Ignore formatting errors
+    }
+
+    return undefined;
+  }
+
+  /**
    * Parse a job card to extract basic information
    */
   async parseJobCard(card: Locator): Promise<Partial<JobListing> | null> {
@@ -82,9 +182,23 @@ export class JobParser {
 
   /**
    * Navigate to job detail page and extract full information
+   * NOTE: Now mostly unused since we extract from JSON, but kept for fallback
    */
   async parseJobDetail(job: Partial<JobListing>): Promise<JobListing | null> {
     try {
+      // If we already have a description from JSON, use it instead of navigating
+      if (job.description && job.description.length > 50) {
+        logger.info('Using description from JSON, skipping navigation', { title: job.title });
+        
+        return {
+          ...job,
+          description: job.description || 'No description available',
+          requirements: job.requirements,
+          benefits: job.benefits,
+          hasOneClickApply: job.hasOneClickApply || false,
+        } as JobListing;
+      }
+
       if (!job.url) {
         logger.warn('No URL provided for job detail');
         return null;

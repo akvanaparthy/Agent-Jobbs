@@ -116,31 +116,16 @@ export class ZipRecruiterNavigator {
    */
   async getJobCards(): Promise<any[]> {
     try {
-      // Wait for job results to load
+      // Wait for page to load
       await this.page.waitForLoadState('domcontentloaded');
       await this.page.waitForTimeout(2000);
 
-      // Possible selectors for job cards
-      const jobCardSelectors = [
-        '[data-test="job-card"]',
-        '.job_result',
-        '[class*="job-card"]',
-        '[class*="JobCard"]',
-        'article[data-job-id]',
-      ];
-
-      for (const selector of jobCardSelectors) {
-        const cards = await this.page.locator(selector).all();
-        if (cards.length > 0) {
-          logger.info(`Found ${cards.length} job cards using selector: ${selector}`);
-          return cards;
-        }
-      }
-
-      logger.warn('No job cards found with any selector');
-      return [];
+      // ZipRecruiter embeds job data in a JSON script tag
+      // Return a marker that will be handled by jobParser.extractJobsFromJSON()
+      logger.info('Job data will be extracted from page JSON');
+      return ['JSON_DATA_AVAILABLE']; // Marker to indicate data is available
     } catch (error) {
-      logger.error('Failed to get job cards', { error });
+      logger.error('Failed to check for job data', { error });
       return [];
     }
   }
