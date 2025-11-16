@@ -1,0 +1,545 @@
+import { config, isWithinOperatingHours, getNextOperatingTime } from './config/config';
+import { logger } from './utils/logger';
+import { browserManager } from './automation/browser';
+import { ZipRecruiterNavigator } from './automation/zipRecruiterNav';
+import { JobParser } from './automation/jobParser';
+import { jobStorage } from './storage/jobStorage';
+import { chromaDB } from './storage/chromaDB';
+import { matcherAgent } from './agents/matcherAgent';
+import { qaAgent } from './agents/qaAgent';
+import { QuestionDetector } from './automation/questionDetector';
+import { FormFiller } from './automation/formFiller';
+import { ApplicationFlowLogger } from './automation/applicationFlowLogger';
+import { rateLimiter } from './config/rateLimiter';
+import { applicationTracker } from './storage/applicationTracker';
+import { exportJobsToExcel, JobWithMatch } from './utils/excelExport';
+import { InteractiveQAAgent } from './agents/interactiveQAAgent';
+import { JobListing, PreparedApplication, AppliedJob } from './types';
+import * as crypto from 'crypto';
+import * as path from 'path';
+import * as fs from 'fs';
+
+async function main() {
+  logger.info('='.repeat(60));
+  logger.info('Agent-Jobbs: Automated Job Application System');
+  logger.info(`Mode: ${config.applicationMode.toUpperCase()}`);
+  logger.info('='.repeat(60));
+
+  try {
+    // Check operating hours
+    if (!isWithinOperatingHours()) {
+      const nextTime = getNextOperatingTime();
+      logger.warn('Outside operating hours', {
+        currentHour: new Date().getHours(),
+        nextAvailable: nextTime.toISOString(),
+      });
+
+      if (!config.dryRun) {
+        logger.info('Exiting. Will resume during operating hours.');
+        return;
+      }
+    }
+
+    // Route to appropriate mode
+    if (config.applicationMode === 'scrape') {
+      await runScrapeMode();
+    } else {
+      await runInteractiveMode();
+    }
+
+  } catch (error) {
+    logger.error('Fatal error', { error });
+    console.error('FATAL ERROR DETAILS:', error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+
+    // Ensure browser is closed on error
+    try {
+      await browserManager.close();
+    } catch (closeError) {
+      // Ignore close errors
+    }
+
+    process.exit(1);
+  }
+}
+
+/**
+ * SCRAPE MODE: Fetch jobs, match with AI, save to Excel
+ */
+async function runScrapeMode() {
+  logger.info('Running in SCRAPE mode - no applications will be submitted');
+
+  try {
+
+    // Initialize ChromaDB
+    logger.info('Initializing ChromaDB...');
+    await chromaDB.initialize();
+
+    const chromaStats = await chromaDB.getStats();
+    logger.info('ChromaDB ready', chromaStats);
+
+    if (chromaStats.resumeChunks === 0) {
+      logger.error('No resume data found! Please run: npm run resume:process');
+      return;
+    }
+
+    // Launch browser
+    logger.info('Launching browser...');
+    await browserManager.launch();
+
+    // Load session
+    const sessionLoaded = await browserManager.loadSession();
+
+    if (!sessionLoaded) {
+      logger.error('No valid session found! Please run: npm run auth:setup');
+      await browserManager.close();
+      return;
+    }
+
+    logger.info('Session loaded successfully');
+
+    const page = browserManager.getPage();
+
+    // Initialize navigators and parsers
+    const navigator = new ZipRecruiterNavigator(page);
+    const parser = new JobParser(page);
+
+    // Rotational search across keyword × location combinations
+    const allJobs: JobListing[] = [];
+    let totalPagesProcessed = 0; // Track total pages across all keyword/location combos
+
+    outerLoop:
+    for (const keyword of config.searchKeywords) {
+      for (const location of config.searchLocations) {
+        logger.info('Starting job search', { keyword, location });
+
+        // Perform search with all filters applied via URL params
+        await navigator.search(keyword, location, {
+          radius: config.searchRadius,
+          dateFilter: config.dateFilter,
+          remoteFilter: config.remoteFilter,
+          experienceLevel: config.experienceLevel,
+        });
+
+        // Collect limited pages per combo
+        let pageCount = 0;
+        const maxPages = 1; // TEMPORARY: Hardcoded to 1 page for testing
+        const extractAllPages = false;
+
+        while (extractAllPages || pageCount < maxPages) {
+          pageCount++;
+          totalPagesProcessed++; // Track across all combos
+          logger.info(`Processing page ${pageCount}${extractAllPages ? ' (extracting all pages)' : ` of max ${maxPages}`} for`, { keyword, location });
+
+          const cards = await navigator.getJobCards();
+          logger.info(`Found ${cards.length} job cards`);
+
+          // Extract jobs from JSON data instead of parsing HTML elements
+          const jobs = await parser.extractJobsFromJSON();
+          logger.info(`Extracted ${jobs.length} jobs from page`);
+
+          for (const jobInfo of jobs) {
+            try {
+              if (!jobInfo) continue;
+
+              // Only process 1-Click Apply jobs
+              if (!jobInfo.hasOneClickApply) {
+                logger.debug('Skipping non-1-Click Apply job', { title: jobInfo.title });
+                continue;
+              }
+
+              // Use description from JSON - no need to navigate to each job page!
+              const fullJob = await parser.parseJobDetail(jobInfo);
+              if (fullJob) {
+                allJobs.push(fullJob);
+                logger.info('Job added to list', {
+                  title: fullJob.title,
+                  company: fullJob.company,
+                });
+              }
+
+              // Limit total jobs across entire run
+              if (allJobs.length >= 50) {
+                logger.info('Reached job limit (50)');
+                break outerLoop;
+              }
+            } catch (error) {
+              logger.error('Error processing job card', { error });
+            }
+          }
+
+          // Check if there's a next page for this combo
+          if (await navigator.hasNextPage() && (extractAllPages || pageCount < maxPages)) {
+            await navigator.goToNextPage();
+            // Small delay between pages to avoid rate limiting
+            await page.waitForTimeout(2000);
+          } else {
+            const reason = !(await navigator.hasNextPage()) 
+              ? 'No more pages available' 
+              : `Reached page limit (${maxPages})`;
+            logger.info(reason + ' for this combo');
+            break;
+          }
+        }
+
+        // Optional small delay between combos
+        try {
+          await page.waitForTimeout(1000);
+        } catch (error) {
+          logger.warn('Page closed during delay, exiting search loop', { error: error instanceof Error ? error.message : String(error) });
+          break outerLoop;
+        }
+
+        // If we already have a good batch, proceed
+        if (allJobs.length >= 50) break outerLoop;
+      }
+    }
+
+    logger.info(`Collected ${allJobs.length} 1-Click Apply jobs in rotational search`);
+
+    // Save jobs to storage
+    if (allJobs.length > 0) {
+      await jobStorage.saveJobs(allJobs);
+    }
+
+    // NOTE: Browser stays open for interactive application process
+    logger.info('\n🤖 Starting Claude AI analysis and interactive application...\n');
+
+    // Interactive application process with real-time user interaction
+    const jobsWithMatches: JobWithMatch[] = [];
+    const appliedJobs: AppliedJob[] = [];
+    let processedCount = 0;
+
+    for (const job of allJobs) {
+      let matchReport: any = undefined;
+      let flowLogger: ApplicationFlowLogger | undefined = undefined;
+
+      try {
+        processedCount++;
+        logger.info(`\n${'='.repeat(80)}`);
+        logger.info(`Processing job ${processedCount}/${allJobs.length}: ${job.title} at ${job.company}`);
+        logger.info('='.repeat(80));
+
+        // Run matcher agent to get match score
+        try {
+          matchReport = await matcherAgent.matchDescription(job);
+          logger.info('Match score', {
+            title: job.title,
+            overallScore: matchReport.overallScore,
+            threshold: config.descriptionMatchThreshold,
+          });
+
+          jobsWithMatches.push({ job, match: matchReport });
+
+          // Skip if match score is too low
+          if (matchReport.overallScore < config.descriptionMatchThreshold) {
+            logger.info(`Match score too low (${(matchReport.overallScore * 100).toFixed(0)}%), skipping job`);
+            continue;
+          }
+        } catch (matchError) {
+          logger.warn('Matcher agent error, skipping this job', {
+            title: job.title,
+            error: matchError instanceof Error ? matchError.message : String(matchError),
+          });
+          jobsWithMatches.push({ job });
+          continue;
+        }
+
+        // Job matches! Start interactive application process
+        logger.info(`✓ Job matches! Score: ${(matchReport.overallScore * 100).toFixed(0)}%`);
+        logger.info('Starting interactive application process...');
+
+        // Create flow logger to track everything
+        flowLogger = new ApplicationFlowLogger(
+          job.id,
+          job.title,
+          job.url
+        );
+
+        flowLogger.logAction('Job matched by AI', {
+          score: matchReport.overallScore,
+          threshold: config.descriptionMatchThreshold
+        });
+
+        // Navigate to job page
+        logger.info('Navigating to job page...');
+        await page.goto(job.url, { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(2000);
+
+        await flowLogger.captureScreenshot(page, 'job-page');
+
+        const questionDetector = new QuestionDetector(page);
+
+        // Click "1-Click Apply" button
+        flowLogger.logAction('Clicking 1-Click Apply button', {});
+        const clicked = await questionDetector.clickApplyButton();
+
+        if (!clicked) {
+          flowLogger.logAction('Apply button not found', {}, false, 'Could not locate apply button');
+          logger.warn('Could not click apply button, skipping job');
+          await flowLogger.save();
+          continue;
+        }
+
+        await page.waitForTimeout(2000);
+        await flowLogger.captureScreenshot(page, 'after-apply-click');
+
+        // Detect what happened after clicking apply
+        flowLogger.logAction('Detecting application response type', {});
+        const responseType = await questionDetector.detectApplicationResponse();
+
+        flowLogger.logModalDetection(
+          responseType.type !== 'none',
+          responseType.type === 'modal' ? 'dialog' : responseType.type,
+          responseType.details
+        );
+
+        // Handle different response types
+        if (responseType.type === 'auto-applied') {
+          // Job was auto-applied without questions
+          logger.info('✓ Job was auto-applied!');
+          flowLogger.logAction('Auto-applied', responseType.details);
+
+          const appliedJob: AppliedJob = {
+            id: `applied_${crypto.randomBytes(8).toString('hex')}`,
+            job,
+            matchReport,
+            appliedAt: new Date().toISOString(),
+            status: 'submitted',
+            autoApplied: true
+          };
+
+          appliedJobs.push(appliedJob);
+          await applicationTracker.recordApplication(appliedJob);
+          await flowLogger.save();
+          continue;
+        }
+
+        if (responseType.type === 'external') {
+          // Redirected to external site
+          logger.warn('⚠ Job redirected to external application site, cannot handle automatically');
+          flowLogger.logAction('External redirect', responseType.details, false, 'Cannot handle external applications');
+          await flowLogger.save();
+          continue;
+        }
+
+        if (responseType.type === 'none') {
+          // No response detected
+          logger.warn('⚠ No application response detected');
+          flowLogger.logAction('No response detected', responseType.details, false, 'Unknown state after clicking apply');
+          await flowLogger.save();
+          continue;
+        }
+
+        // Type is 'modal' - we have an application form with questions!
+        logger.info('✓ Application form detected');
+        flowLogger.logAction('Application modal opened', responseType.details);
+
+        await flowLogger.captureHtmlSnapshot(page, 'modal-opened');
+
+        // Detect questions on current page (single-step only to avoid loops)
+        logger.info('Detecting questions on current page...');
+        const questions = await questionDetector.detectQuestions();
+
+        flowLogger.logQuestions(1, questions);
+
+        logger.info(`Found ${questions.length} questions`);
+
+        if (questions.length === 0) {
+          logger.warn('No questions detected, skipping job');
+          flowLogger.logAction('No questions found', {}, false, 'Form had no detectable questions');
+          await flowLogger.save();
+          continue;
+        }
+        await page.waitForTimeout(2000);
+        await questionDetector.clickApplyButton();
+        await page.waitForTimeout(2000);
+
+        // Create Interactive Q&A Agent for real-time processing
+        const interactiveQA = new InteractiveQAAgent(page, qaAgent);
+
+        // Process questions interactively with user approval
+        flowLogger.logAction('Starting interactive Q&A process', {
+          totalQuestions: questions.length
+        });
+
+        const qaResult = await interactiveQA.processQuestionsInteractively(
+          questions,
+          job
+        );
+
+        if (qaResult.skipped) {
+          logger.info('User chose to skip this job');
+          flowLogger.logAction('Job skipped by user', {});
+          await flowLogger.save();
+          continue;
+        }
+
+        if (!qaResult.completed) {
+          logger.warn('Q&A process did not complete successfully');
+          flowLogger.logAction('Q&A process incomplete', {}, false, 'Process ended before all questions were answered');
+          await flowLogger.save();
+          continue;
+        }
+
+        // All questions answered and filled!
+        logger.info(`✓ Completed filling ${qaResult.questionAnswerPairs.length} questions`);
+        flowLogger.logAction('All questions filled', {
+          totalQuestions: qaResult.questionAnswerPairs.length,
+          edited: qaResult.questionAnswerPairs.filter(qa => qa.edited).length
+        });
+
+        await flowLogger.captureScreenshot(page, 'all-fields-filled');
+
+        // Check if there's a submit button
+        const hasSubmit = await questionDetector.hasSubmitButton();
+
+        if (hasSubmit) {
+          const submitText = await questionDetector.getSubmitButtonText();
+          logger.info(`\n✓ Application ready for submission`);
+          logger.info(`Submit button detected: "${submitText}"`);
+
+          // Ask user to manually review and submit
+          const prompts = interactiveQA.getPrompts();
+          const confirmed = await prompts.confirmSubmit(job.title, qaResult.questionAnswerPairs.length);
+
+          if (confirmed) {
+            await prompts.waitForManualSubmit();
+
+            flowLogger.logAction('User manually submitted application', {});
+
+            const appliedJob: AppliedJob = {
+              id: `applied_${crypto.randomBytes(8).toString('hex')}`,
+              job,
+              matchReport,
+              appliedAt: new Date().toISOString(),
+              status: 'submitted',
+              autoApplied: false,
+              questionAnswerPairs: qaResult.questionAnswerPairs
+            };
+
+            appliedJobs.push(appliedJob);
+            await applicationTracker.recordApplication(appliedJob);
+
+            prompts.showCompletionSummary(job.title, true, qaResult.questionAnswerPairs.length, false);
+            flowLogger.logResult({ applied: true, autoApplied: false, externalRedirect: false });
+          } else {
+            logger.info('User chose not to submit');
+            flowLogger.logAction('User declined to submit', {});
+            flowLogger.logResult({ applied: false, autoApplied: false, externalRedirect: false });
+          }
+        } else {
+          logger.warn('No submit button found, application may be incomplete');
+          flowLogger.logAction('No submit button found', {}, false, 'Could not locate submit button');
+          flowLogger.logResult({ applied: false, autoApplied: false, externalRedirect: false, error: 'No submit button' });
+        }
+
+        await flowLogger.save();
+
+        // Ask if user wants to continue to next job
+        const prompts = interactiveQA.getPrompts();
+        const shouldContinue = await prompts.promptContinueToNextJob(
+          processedCount,
+          allJobs.length - processedCount
+        );
+
+        if (!shouldContinue) {
+          logger.info('User chose to stop processing jobs');
+          break;
+        }
+
+      } catch (error) {
+        logger.error('Error processing job', { error, jobTitle: job.title });
+        if (flowLogger) {
+          flowLogger.logAction('Error in application flow', { error: error instanceof Error ? error.message : String(error) }, false);
+          await flowLogger.save();
+        }
+      }
+    }
+
+    // Close browser after processing all jobs
+    logger.info('\n🚪 Closing browser...');
+    await browserManager.close();
+    logger.info('✅ Browser closed\n');
+
+    // Export all jobs to Excel
+    logger.info('📊 Creating Excel export...');
+    try {
+      if (jobsWithMatches.length > 0) {
+        const excelPath = await exportJobsToExcel(jobsWithMatches);
+        logger.info(`✅ Excel export saved to: ${excelPath}`);
+      }
+    } catch (error) {
+      logger.error('Failed to create Excel export', { error });
+    }
+
+    // Display summary
+    logger.info('\n' + '='.repeat(80));
+    logger.info('SESSION SUMMARY');
+    logger.info('='.repeat(80));
+
+    logger.info(`\nTotal jobs collected: ${allJobs.length}`);
+    logger.info(`Jobs matched by AI: ${jobsWithMatches.filter(j => j.match && j.match.overallScore >= config.descriptionMatchThreshold).length}`);
+    logger.info(`Applications submitted: ${appliedJobs.length}`);
+
+    if (appliedJobs.length > 0) {
+      logger.info('\n' + '='.repeat(80));
+      logger.info('APPLIED JOBS');
+      logger.info('='.repeat(80));
+
+      appliedJobs.forEach((app, index) => {
+        const jobTitle = app.job?.title || app.title || 'Unknown Job';
+        const jobCompany = app.job?.company || app.company || 'Unknown Company';
+        logger.info(`\n${index + 1}. ${jobTitle} at ${jobCompany}`);
+        logger.info(`   Match Score: ${(app.matchReport?.overallScore ? app.matchReport.overallScore * 100 : 0).toFixed(0)}%`);
+        logger.info(`   Auto-applied: ${app.autoApplied ? 'YES' : 'NO (Manual)'}`);
+        if (app.questionAnswerPairs) {
+          logger.info(`   Questions answered: ${app.questionAnswerPairs.length}`);
+        }
+        logger.info(`   Applied at: ${new Date(app.appliedAt).toLocaleString()}`);
+      });
+
+      logger.info('\n' + '='.repeat(80));
+      logger.info(`\n✅ Successfully applied to ${appliedJobs.length} job${appliedJobs.length === 1 ? '' : 's'}!`);
+    } else {
+      logger.info('\n💡 No applications were submitted this session.');
+      if (jobsWithMatches.length === 0) {
+        logger.info('Try adjusting your search keywords or location.');
+      } else if (jobsWithMatches.filter(j => j.match && j.match.overallScore >= config.descriptionMatchThreshold).length === 0) {
+        logger.info('No jobs met the match threshold. Try lowering the threshold in .env');
+      } else {
+        logger.info('Jobs were found but applications were skipped or incomplete.');
+      }
+    }
+
+    logger.info('\n✓ Session complete!');
+
+  } catch (error) {
+    logger.error('Fatal error', { error });
+    console.error('FATAL ERROR DETAILS:', error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+    
+    // Ensure browser is closed on error
+    try {
+      await browserManager.close();
+    } catch (closeError) {
+      // Ignore close errors
+    }
+    
+    process.exit(1);
+  }
+}
+
+// Run the application
+if (require.main === module) {
+  main()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch(error => {
+      logger.error('Unhandled error', { error });
+      process.exit(1);
+    });
+}
+
+export default main;

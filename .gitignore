@@ -61,3 +61,13 @@ image.png
 image-*.png
 *.png
 !docs/**/*.png
+
+# Ignore generated Excel results and playback/profile data
+data/results/
+data/results/*.xlsx
+
+# Playwright profile directory (user-specific)
+playwright-profile/
+
+# Ignore Windows reserved device filename if created by mistake
+/nul
