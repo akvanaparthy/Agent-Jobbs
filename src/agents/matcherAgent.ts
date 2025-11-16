@@ -122,7 +122,6 @@ ${resumeContext}
 Please provide a comprehensive analysis in JSON format:
 {
   "overallScore": <number 0.0-1.0>,
-  "titleMatch": <number 0.0-1.0>,
   "skillsMatch": <number 0.0-1.0>,
   "experienceMatch": <number 0.0-1.0>,
   "reasoning": "<detailed explanation of the match>",
@@ -134,7 +133,6 @@ Please provide a comprehensive analysis in JSON format:
 
 Scoring criteria:
 - overallScore: Holistic assessment of fit (0.0 = no match, 1.0 = perfect match)
-- titleMatch: How well job title aligns with candidate's roles
 - skillsMatch: Technical skills overlap
 - experienceMatch: Evaluate if the job's experience requirements (if stated) align with ${config.candidateExperienceYears} years. 
   * If job requires 0-3 years and candidate has 1-3 years: score 0.9-1.0
@@ -148,19 +146,21 @@ Be thorough but concise. Return ONLY the JSON object.`;
       const response = await (this.model as any).invoke(prompt);
       const content = response.content.toString();
       logger.info('✅ Detailed analysis complete');
+      logger.debug('Claude response:', { content }); // Log Claude's raw response
 
       // Parse JSON response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        logger.error('Failed to parse JSON from Claude response', { content });
         throw new Error('Failed to parse JSON response');
       }
 
       const result = JSON.parse(jsonMatch[0]);
+      logger.debug('Parsed match result:', result); // Log parsed result
 
       // Validate and clamp scores
       const matchReport: MatchReport = {
         overallScore: this.clampScore(result.overallScore),
-        titleMatch: this.clampScore(result.titleMatch),
         skillsMatch: this.clampScore(result.skillsMatch),
         experienceMatch: this.clampScore(result.experienceMatch),
         reasoning: result.reasoning || '',
@@ -239,7 +239,6 @@ Be thorough but concise. Return ONLY the JSON object.`;
   private createEmptyMatchReport(reason: string): MatchReport {
     return {
       overallScore: 0,
-      titleMatch: 0,
       skillsMatch: 0,
       experienceMatch: 0,
       reasoning: reason,

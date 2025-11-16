@@ -24,7 +24,6 @@ export async function exportJobsToExcel(jobsWithMatches: JobWithMatch[]): Promis
       { header: 'Location', key: 'location', width: 20 },
       { header: 'Salary', key: 'salary', width: 20 },
       { header: 'Overall Match %', key: 'overallScore', width: 15 },
-      { header: 'Title Match %', key: 'titleMatch', width: 15 },
       { header: 'Skills Match %', key: 'skillsMatch', width: 15 },
       { header: 'Experience Match %', key: 'experienceMatch', width: 18 },
       { header: 'Description (First 500 chars)', key: 'description', width: 50 },
@@ -50,7 +49,6 @@ export async function exportJobsToExcel(jobsWithMatches: JobWithMatch[]): Promis
     // Add data rows
     for (const { job, match } of jobsWithMatches) {
       const overallScore = match ? Math.round(match.overallScore * 100) : 'N/A';
-      const titleMatch = match ? Math.round(match.titleMatch * 100) : 'N/A';
       const skillsMatch = match ? Math.round(match.skillsMatch * 100) : 'N/A';
       const experienceMatch = match ? Math.round(match.experienceMatch * 100) : 'N/A';
 
@@ -60,7 +58,6 @@ export async function exportJobsToExcel(jobsWithMatches: JobWithMatch[]): Promis
         location: job.location,
         salary: job.salary || 'Not specified',
         overallScore,
-        titleMatch,
         skillsMatch,
         experienceMatch,
         description: job.description ? job.description.substring(0, 500) : 'No description',

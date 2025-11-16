@@ -94,29 +94,13 @@ export class ZipRecruiterNavigator {
    */
   async hasNextPage(): Promise<boolean> {
     try {
-      const nextButtonSelectors = [
-        'button[aria-label="Next"]',
-        'a[rel="next"]',
-        '[data-test="next-page"]',
-        'button:has-text("Next")',
-        '.pagination .next:not(.disabled)',
-      ];
-
-      for (const selector of nextButtonSelectors) {
-        try {
-          const element = await this.page.locator(selector).first();
-          const isVisible = await element.isVisible({ timeout: 1000 });
-          const isDisabled = await element.isDisabled().catch(() => false);
-
-          if (isVisible && !isDisabled) {
-            return true;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return false;
+      // For ZipRecruiter, we can check if there are job results on the current page
+      // If there are 20 jobs (a full page), assume there might be more
+      // The actual limit will be controlled by MAX_PAGES_TO_EXTRACT in config
+      
+      // Simple check: if we have jobs on this page, assume more pages exist
+      // The pagination loop in index.ts will handle the max page limit
+      return true; // Let the pagination loop control when to stop
     } catch (error) {
       logger.error('Error checking for next page', { error });
       return false;
@@ -130,31 +114,27 @@ export class ZipRecruiterNavigator {
     try {
       logger.info('Navigating to next page');
 
-      const nextButtonSelectors = [
-        'button[aria-label="Next"]',
-        'a[rel="next"]',
-        '[data-test="next-page"]',
-        'button:has-text("Next")',
-      ];
+      // ZipRecruiter uses URL-based pagination (?page=1, ?page=2, etc.)
+      const currentUrl = new URL(this.page.url());
+      const currentPage = parseInt(currentUrl.searchParams.get('page') || '1');
+      const nextPage = currentPage + 1;
 
-      for (const selector of nextButtonSelectors) {
-        try {
-          const element = await this.page.locator(selector).first();
-          if (await element.isVisible({ timeout: 1000 })) {
-            await scrollToElement(this.page, selector);
-            await humanClick(this.page, selector);
-            await this.page.waitForLoadState('domcontentloaded');
-            await pageLoadDelay();
-            logger.info('Moved to next page');
-            return true;
-          }
-        } catch {
-          continue;
-        }
-      }
+      // Update the page parameter
+      currentUrl.searchParams.set('page', nextPage.toString());
+      const nextPageUrl = currentUrl.toString();
 
-      logger.warn('Could not find next page button');
-      return false;
+      logger.info('Navigating to next page via URL', {
+        from: currentPage,
+        to: nextPage,
+        url: nextPageUrl,
+      });
+
+      // Navigate to the next page
+      await this.page.goto(nextPageUrl, { waitUntil: 'domcontentloaded' });
+      await pageLoadDelay();
+
+      logger.info('Moved to next page');
+      return true;
     } catch (error) {
       logger.error('Failed to navigate to next page', { error });
       return false;

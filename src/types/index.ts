@@ -1,3 +1,9 @@
+// Application modes
+export enum ApplicationMode {
+  SCRAPE = 'scrape',           // Scrape and save only
+  INTERACTIVE = 'interactive'  // Apply interactively
+}
+
 // Job-related types
 export interface JobListing {
   id: string;
@@ -9,13 +15,13 @@ export interface JobListing {
   url: string;
   description: string;
   hasOneClickApply: boolean;
+  listingKey?: string;  // ZipRecruiter listing key for API calls
   scrapedAt: string;
 }
 
 // Match score and analysis
 export interface MatchReport {
   overallScore: number;
-  titleMatch: number;
   skillsMatch: number;
   experienceMatch: number;
   reasoning: string;
@@ -55,7 +61,7 @@ export interface Answer {
   questionId: string;
   answer: string;
   confidence: number;
-  source: 'cached' | 'generated' | 'user_input_required';
+  source: 'cached' | 'generated' | 'user_input_required' | 'user_input';
 }
 
 // Prepared application package
@@ -73,18 +79,42 @@ export interface PreparedApplication {
 // Applied job tracking
 export interface AppliedJob {
   id: string;
-  jobId: string;
-  title: string;
-  company: string;
-  url: string;
-  appliedDate: string;
-  appliedTime: string;
-  questions: ApplicationQuestion[];
-  answers: Answer[];
-  matchScore: number;
+
+  // Job reference (can be full job object or separate fields)
+  job?: JobListing;
+  jobId?: string;
+  title?: string;
+  company?: string;
+  url?: string;
+
+  // Match information
+  matchReport?: any;
+  matchScore?: number;
+
+  // Application details
+  appliedAt: string;  // ISO timestamp
+  appliedDate?: string;  // Legacy format
+  appliedTime?: string;  // Legacy format
+
+  // Q&A data (new format with user approval)
+  questionAnswerPairs?: Array<{
+    question: ApplicationQuestion;
+    answer: Answer;
+    userApproved: boolean;
+    edited: boolean;
+  }>;
+
+  // Q&A data (legacy format)
+  questions?: ApplicationQuestion[];
+  answers?: Answer[];
+
+  // Status tracking
+  status: 'submitted' | 'applied' | 'interview' | 'rejected' | 'offer' | 'withdrawn';
+  autoApplied?: boolean;
+
+  // Additional fields
   salary?: string;
-  status: 'applied' | 'interview' | 'rejected' | 'offer' | 'withdrawn';
-  notes: string;
+  notes?: string;
 }
 
 // Q&A pair for vector storage
@@ -127,6 +157,9 @@ export interface AppConfig {
   logToFile: boolean;
   claudeModel: string;
   candidateExperienceYears: string;
+  applicationMode: 'scrape' | 'interactive';
+  autoApproveConfidence: number;
+  minApplyScore: number;
 }
 
 // Browser session data
@@ -164,3 +197,6 @@ export interface RateLimitState {
   nextAvailableTime?: number;
   dailyResetTime: number;
 }
+
+// Re-export interview API types
+export * from './interviewAPI';

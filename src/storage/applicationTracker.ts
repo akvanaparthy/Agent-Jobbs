@@ -75,9 +75,11 @@ export class ApplicationTracker {
       }
 
       // Sort by date (newest first)
-      allApplications.sort(
-        (a, b) => new Date(b.appliedDate).getTime() - new Date(a.appliedDate).getTime()
-      );
+      allApplications.sort((a, b) => {
+        const dateA = a.appliedDate || a.appliedAt;
+        const dateB = b.appliedDate || b.appliedAt;
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
 
       return allApplications;
     } catch (error) {
@@ -148,7 +150,8 @@ export class ApplicationTracker {
     const byDate = new Map<string, AppliedJob[]>();
 
     for (const app of applications) {
-      const date = app.appliedDate;
+      // Extract date from appliedDate or appliedAt
+      const date = app.appliedDate || app.appliedAt.split('T')[0];
       if (!byDate.has(date)) {
         byDate.set(date, []);
       }
@@ -174,7 +177,9 @@ export class ApplicationTracker {
       return acc;
     }, {} as Record<string, number>);
 
-    const matchScores = allApplications.map(app => app.matchScore).filter(score => score > 0);
+    const matchScores = allApplications
+      .map(app => app.matchScore || app.matchReport?.overallScore)
+      .filter((score): score is number => score !== undefined && score > 0);
     const averageMatchScore =
       matchScores.length > 0
         ? matchScores.reduce((sum, score) => sum + score, 0) / matchScores.length
@@ -212,14 +217,14 @@ export class ApplicationTracker {
 
       const rows = applications.map(app => [
         app.id,
-        app.jobId,
-        app.title,
-        app.company,
-        app.url,
-        app.appliedDate,
-        app.appliedTime,
-        app.matchScore.toString(),
-        app.salary || 'N/A',
+        app.jobId || app.job?.id || '',
+        app.title || app.job?.title || '',
+        app.company || app.job?.company || '',
+        app.url || app.job?.url || '',
+        app.appliedDate || app.appliedAt.split('T')[0],
+        app.appliedTime || app.appliedAt.split('T')[1] || '',
+        (app.matchScore || app.matchReport?.overallScore || 0).toString(),
+        app.salary || app.job?.salary || 'N/A',
         app.status,
         app.notes || '',
       ]);
@@ -260,8 +265,8 @@ export class ApplicationTracker {
 
     return allApplications.filter(
       app =>
-        app.title.toLowerCase().includes(lowerQuery) ||
-        app.company.toLowerCase().includes(lowerQuery) ||
+        (app.title || app.job?.title || '').toLowerCase().includes(lowerQuery) ||
+        (app.company || app.job?.company || '').toLowerCase().includes(lowerQuery) ||
         app.notes?.toLowerCase().includes(lowerQuery)
     );
   }
@@ -281,7 +286,7 @@ export class ApplicationTracker {
     const allApplications = this.getAllApplications();
 
     return allApplications.filter(app => {
-      const appDate = new Date(app.appliedDate);
+      const appDate = new Date(app.appliedDate || app.appliedAt);
       return appDate >= startDate && appDate <= endDate;
     });
   }

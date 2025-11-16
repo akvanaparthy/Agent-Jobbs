@@ -477,4 +477,202 @@ export class QuestionDetector {
       return false;
     }
   }
+
+  /**
+   * Collect ALL questions from ALL steps in a multi-step form
+   * This is the key method for exploring the complete application flow
+   */
+  async getAllQuestionsFromAllSteps(): Promise<{
+    questions: ApplicationQuestion[];
+    totalSteps: number;
+  }> {
+    try {
+      logger.info('Starting multi-step question detection');
+
+      const allQuestions: ApplicationQuestion[] = [];
+      let stepNumber = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        logger.info(`Detecting questions on step ${stepNumber}`);
+
+        // Detect questions on current page
+        const questionsOnThisPage = await this.detectQuestions();
+        logger.info(`Found ${questionsOnThisPage.length} questions on step ${stepNumber}`);
+
+        // Add to collection
+        allQuestions.push(...questionsOnThisPage);
+
+        // Check if there's a next step
+        if (await this.hasNextStep()) {
+          logger.info(`Continuing to step ${stepNumber + 1}`);
+          const navigated = await this.goToNextStep();
+
+          if (navigated) {
+            stepNumber++;
+          } else {
+            logger.warn('Failed to navigate to next step, stopping');
+            hasMore = false;
+          }
+        } else {
+          logger.info('No more steps detected, completed');
+          hasMore = false;
+        }
+
+        // Safety limit to prevent infinite loops
+        if (stepNumber > 10) {
+          logger.warn('Reached maximum step limit (10), stopping');
+          hasMore = false;
+        }
+      }
+
+      logger.info(`Completed: Found ${allQuestions.length} total questions across ${stepNumber} steps`);
+
+      return {
+        questions: allQuestions,
+        totalSteps: stepNumber
+      };
+    } catch (error) {
+      logger.error('Failed to collect questions from all steps', { error });
+      return {
+        questions: [],
+        totalSteps: 0
+      };
+    }
+  }
+
+  /**
+   * Detect what happened after clicking "Apply" button
+   * Returns the type of response: modal, auto-applied, external, or none
+   */
+  async detectApplicationResponse(): Promise<{
+    type: 'modal' | 'auto-applied' | 'external' | 'none';
+    details: any;
+  }> {
+    try {
+      logger.info('Detecting application response type');
+
+      // Wait a moment for the response
+      await afterClickDelay();
+
+      // Check for auto-applied confirmation
+      const appliedIndicators = [
+        'text=Application submitted',
+        'text=Application sent',
+        'text=Successfully applied',
+        'text=Already applied',
+        '.applied-badge',
+        '[class*="applied"]',
+      ];
+
+      for (const indicator of appliedIndicators) {
+        try {
+          const element = this.page.locator(indicator).first();
+          if (await element.isVisible({ timeout: 2000 })) {
+            logger.info('Auto-applied detected', { indicator });
+            return {
+              type: 'auto-applied',
+              details: {
+                message: await element.innerText().catch(() => 'Application submitted')
+              }
+            };
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      // Check for external redirect
+      const currentUrl = this.page.url();
+      if (!currentUrl.includes('ziprecruiter.com')) {
+        logger.info('External redirect detected', { url: currentUrl });
+        return {
+          type: 'external',
+          details: { redirectUrl: currentUrl }
+        };
+      }
+
+      // Check for modal/popup
+      const modalDetected = await this.waitForApplicationForm();
+      if (modalDetected) {
+        // Get some details about the modal
+        const hasFormFields = await this.page.locator('input, textarea, select').count();
+        logger.info('Modal detected', { hasFormFields });
+
+        return {
+          type: 'modal',
+          details: {
+            formFieldsCount: hasFormFields,
+            hasMultipleSteps: await this.hasNextStep()
+          }
+        };
+      }
+
+      logger.warn('No application response detected');
+      return {
+        type: 'none',
+        details: {}
+      };
+    } catch (error) {
+      logger.error('Error detecting application response', { error });
+      return {
+        type: 'none',
+        details: { error: (error as Error).message }
+      };
+    }
+  }
+
+  /**
+   * Check if there's a submit button visible
+   */
+  async hasSubmitButton(): Promise<boolean> {
+    try {
+      const submitSelectors = [
+        'button[type="submit"]',
+        'button:has-text("Submit")',
+        'button:has-text("Submit Application")',
+        'button:has-text("Apply")',
+        '[data-test="submit"]',
+      ];
+
+      for (const selector of submitSelectors) {
+        const button = this.page.locator(selector).first();
+        if (await button.isVisible({ timeout: 1000 })) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get the submit button text for logging
+   */
+  async getSubmitButtonText(): Promise<string> {
+    try {
+      const submitSelectors = [
+        'button[type="submit"]',
+        'button:has-text("Submit")',
+        'button:has-text("Apply")',
+      ];
+
+      for (const selector of submitSelectors) {
+        try {
+          const button = this.page.locator(selector).first();
+          if (await button.isVisible({ timeout: 1000 })) {
+            return await button.innerText();
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return 'Submit';
+    } catch {
+      return 'Submit';
+    }
+  }
 }

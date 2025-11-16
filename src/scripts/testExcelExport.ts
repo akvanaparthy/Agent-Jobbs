@@ -23,7 +23,6 @@ async function testExcelExport() {
     if (index < 5) {
       const mockMatch: MatchReport = {
         overallScore: 0.75 + (Math.random() * 0.2),
-        titleMatch: 0.8 + (Math.random() * 0.15),
         skillsMatch: 0.7 + (Math.random() * 0.2),
         experienceMatch: 0.65 + (Math.random() * 0.25),
         matchedSkills: ['Python', 'TypeScript', 'AI/ML', 'APIs'],

@@ -41,6 +41,9 @@ const configSchema = z.object({
   logToFile: z.string().transform(str => str.toLowerCase() === 'true'),
   claudeModel: z.string().min(1),
   candidateExperienceYears: z.string().optional().default('0-3'),
+  applicationMode: z.enum(['scrape', 'interactive']).optional().default('scrape'),
+  autoApproveConfidence: z.string().transform(Number).pipe(z.number().min(0).max(100)).optional().default('65'),
+  minApplyScore: z.string().transform(Number).pipe(z.number().min(0).max(100)).optional().default('60'),
 });
 
 // Load and validate configuration
@@ -74,6 +77,9 @@ function loadConfig(): AppConfig {
     logToFile: process.env.LOG_TO_FILE || 'true',
     claudeModel: process.env.CLAUDE_MODEL || 'claude-3-5-haiku-20241022',
     candidateExperienceYears: process.env.CANDIDATE_EXPERIENCE_YEARS || '0-3',
+    applicationMode: process.env.APPLICATION_MODE || 'scrape',
+    autoApproveConfidence: process.env.AUTO_APPROVE_CONFIDENCE || '65',
+    minApplyScore: process.env.MIN_APPLY_SCORE || '60',
   };
 
   try {

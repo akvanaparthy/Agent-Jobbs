@@ -110,12 +110,13 @@ export class JobParser {
             id,
             title: job.title || 'Unknown Title',
             company: job.company?.name || job.company?.canonicalDisplayName || 'Unknown Company',
-            location: job.location?.displayName || 
+            location: job.location?.displayName ||
               (job.location?.city ? `${job.location.city}, ${job.location.stateCode}` : 'Unknown'),
             salary: this.formatSalary(job.pay),
             postedDate: job.status?.postedAtUtc || 'Unknown',
             url: job.jobRedirectPageUrl || job.rawCanonicalZipJobPageUrl || '',
             hasOneClickApply,
+            listingKey: job.listingKey,  // Store for API calls
             scrapedAt: new Date().toISOString(),
             description: cleanDescription,
           });

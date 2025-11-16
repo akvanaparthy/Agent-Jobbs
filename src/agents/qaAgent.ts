@@ -128,73 +128,105 @@ Format:
 Answer: yes|no
 Reason: <brief explanation>`;
       } else {
-        // For text/textarea questions
-        prompt = `You are helping a job candidate answer an application question.
+        // For text/textarea questions - use strict JSON output
+        const isPhoneQuestion = this.isPhoneQuestion(question.label);
+        const isLinkedInQuestion = this.isLinkedInQuestion(question.label);
+        const isURLQuestion = this.isURLQuestion(question.label);
 
-Question: ${question.label}
-${question.required ? '(Required)' : '(Optional)'}
-${question.placeholder ? `Placeholder: ${question.placeholder}` : ''}
+        prompt = `<task>Extract the answer value for a job application question from the candidate's resume.</task>
 
-Job Information:
-- Title: ${job.title}
-- Company: ${job.company}
-- Description: ${job.description.substring(0, 300)}...
+<question>${question.label}</question>
 
-Candidate Resume Context:
+<resume_context>
 ${resumeContext}
+</resume_context>
 
-Please provide a concise, professional answer to this question based on the candidate's resume and the job requirements.
+<output_format>
+Return ONLY valid JSON with NO other text before or after:
+{
+  "answer": "value",
+  "confidence": 0.85
+}
+</output_format>
 
-Guidelines:
-- Be specific and relevant
-- Keep it professional
-- If it's a "years of experience" question, extract from resume
-- If it's about authorization/eligibility, answer conservatively
-- Maximum 200 words
+<rules>
+${isPhoneQuestion ? '- answer must be phone number in format: +1XXXXXXXXXX (digits only, e.g., +15551234567)' : ''}
+${isLinkedInQuestion ? '- answer must be full LinkedIn URL (e.g., https://linkedin.com/in/username)' : ''}
+${isURLQuestion ? '- answer must be full URL starting with https://' : ''}
+${!isPhoneQuestion && !isLinkedInQuestion && !isURLQuestion ? '- answer must be brief, professional response (max 2 sentences)' : ''}
+- confidence: number between 0.0-1.0
+- Return ONLY the JSON object, nothing else
+- Do NOT add explanations, reasoning, or any text outside the JSON
+</rules>
 
-Answer:`;
+<example_output>
+{"answer": "+15551234567", "confidence": 0.9}
+</example_output>`;
       }
 
       const response = await (this.model as any).invoke(prompt);
-      const answerText = response.content.toString().trim();
+      const responseText = response.content.toString().trim();
 
       // Parse answer based on type
       let finalAnswer = '';
       let confidence = 0.8; // Default confidence
 
-      if (question.type === 'checkbox') {
-        const match = answerText.match(/Answer:\s*(yes|no)/i);
-        if (match) {
-          finalAnswer = match[1].toLowerCase();
-          confidence = 0.85;
-        } else {
-          finalAnswer = 'no';
+      // For text/textarea questions, parse JSON response
+      if (question.type !== 'checkbox' && question.type !== 'select' && question.type !== 'radio') {
+        try {
+          // Extract JSON from response (handle cases where Claude adds markdown code blocks)
+          let jsonText = responseText;
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            jsonText = jsonMatch[0];
+          }
+
+          const parsed = JSON.parse(jsonText);
+          finalAnswer = parsed.answer || '';
+          confidence = parsed.confidence || 0.8;
+
+          logger.debug('Parsed JSON response', { answer: finalAnswer, confidence });
+        } catch (error) {
+          // Fallback: treat entire response as answer
+          logger.warn('Failed to parse JSON, using raw response', { error });
+          finalAnswer = responseText;
           confidence = 0.5;
         }
-      } else if (question.type === 'select' || question.type === 'radio') {
-        // Verify the answer is one of the options
-        if (question.options?.some(opt => opt.toLowerCase() === answerText.toLowerCase())) {
-          finalAnswer = answerText;
-          confidence = 0.85;
-        } else {
-          // Try to find closest match
-          const closestOption = question.options?.find(opt =>
-            answerText.toLowerCase().includes(opt.toLowerCase()) ||
-            opt.toLowerCase().includes(answerText.toLowerCase())
-          );
+      } else {
+        // For select/radio/checkbox, use existing logic
+        const answerText = responseText;
 
-          if (closestOption) {
-            finalAnswer = closestOption;
-            confidence = 0.7;
+        if (question.type === 'checkbox') {
+          const match = answerText.match(/Answer:\s*(yes|no)/i);
+          if (match) {
+            finalAnswer = match[1].toLowerCase();
+            confidence = 0.85;
           } else {
-            // Default to first option if no match
-            finalAnswer = question.options?.[0] || '';
-            confidence = 0.3;
+            finalAnswer = 'no';
+            confidence = 0.5;
+          }
+        } else if (question.type === 'select' || question.type === 'radio') {
+          // Verify the answer is one of the options
+          if (question.options?.some(opt => opt.toLowerCase() === answerText.toLowerCase())) {
+            finalAnswer = answerText;
+            confidence = 0.85;
+          } else {
+            // Try to find closest match
+            const closestOption = question.options?.find(opt =>
+              answerText.toLowerCase().includes(opt.toLowerCase()) ||
+              opt.toLowerCase().includes(answerText.toLowerCase())
+            );
+
+            if (closestOption) {
+              finalAnswer = closestOption;
+              confidence = 0.7;
+            } else {
+              // Default to first option if no match
+              finalAnswer = question.options?.[0] || '';
+              confidence = 0.3;
+            }
           }
         }
-      } else {
-        finalAnswer = answerText;
-        confidence = 0.8;
       }
 
       // Check if answer seems incomplete or uncertain
@@ -317,6 +349,30 @@ Answer:`;
    */
   private generateQAPairId(question: string): string {
     return `qa_${crypto.createHash('md5').update(question.toLowerCase()).digest('hex').substring(0, 12)}`;
+  }
+
+  /**
+   * Check if question is asking for phone number
+   */
+  private isPhoneQuestion(questionText: string): boolean {
+    const text = questionText.toLowerCase();
+    return text.includes('phone') || text.includes('mobile') || text.includes('cell') || text.includes('number to receive');
+  }
+
+  /**
+   * Check if question is asking for LinkedIn
+   */
+  private isLinkedInQuestion(questionText: string): boolean {
+    const text = questionText.toLowerCase();
+    return text.includes('linkedin');
+  }
+
+  /**
+   * Check if question is asking for URL
+   */
+  private isURLQuestion(questionText: string): boolean {
+    const text = questionText.toLowerCase();
+    return text.includes('github') || text.includes('portfolio') || text.includes('website');
   }
 
   /**

@@ -12,6 +12,8 @@
     "resume:process": "ts-node src/scripts/processResume.ts",
     "resume:view": "ts-node src/scripts/viewResumeVectors.ts",
     "jobs:find": "ts-node src/scripts/findJobs.ts",
+    "monitor": "ts-node scripts/monitor-ziprecruiter.ts",
+    "monitor:api": "ts-node scripts/monitor-api-passive.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:api": "ts-node src/scripts/testAPIs.ts"
   },
@@ -40,7 +42,7 @@
     "@langchain/community": "^1.0.2",
     "@langchain/core": "^1.0.4",
     "@types/pdf-parse": "^1.1.5",
-    "chalk": "^5.6.2",
+    "chalk": "^4.1.2",
     "chromadb": "^3.1.4",
     "cli-table3": "^0.6.5",
     "dotenv": "^17.2.3",
