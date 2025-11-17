@@ -200,6 +200,10 @@ export async function runInteractiveMode() {
     }
   }
 
+  // Cleanup readline interface to allow process to exit
+  applicationFlow.cleanup();
+  logger.debug('Cleaned up application flow resources');
+
   // Close browser
   await browserManager.close();
 

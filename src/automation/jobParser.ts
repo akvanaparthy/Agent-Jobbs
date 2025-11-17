@@ -126,6 +126,17 @@ export class JobParser {
         }
       }
 
+      // Navigate back to search results page to avoid breaking pagination
+      if (this.page.url() !== currentUrl) {
+        try {
+          await this.page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await this.page.waitForTimeout(500);
+          logger.debug('Navigated back to search results page');
+        } catch (error) {
+          logger.warn('Failed to navigate back to search results', { error: String(error) });
+        }
+      }
+
       logger.info(`Successfully extracted ${jobs.length} jobs`);
       return jobs.filter(job => job.title && job.company);
     } catch (error) {
