@@ -117,15 +117,20 @@ export class SessionManager {
         await page.waitForFunction(
           () => {
             const title = document.title;
-            return !title.includes('Just a moment') && 
+            return !title.includes('Just a moment') &&
                    !title.includes('Checking your browser') &&
                    !document.querySelector('#challenge-running');
           },
-          { timeout: 30000 }
+          { timeout: 60000 }
         );
         logger.info('Cloudflare challenge passed');
       } catch (error) {
-        logger.warn('Cloudflare challenge timeout - continuing anyway');
+        logger.error('Cloudflare challenge timeout - session may be invalid');
+        // Check if still on challenge page
+        const title = await page.title();
+        if (title.includes('Just a moment') || title.includes('Checking your browser')) {
+          throw new Error('Failed to pass Cloudflare challenge - cannot load session');
+        }
       }
 
       // Additional wait for page to stabilize
