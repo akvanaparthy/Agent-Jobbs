@@ -153,6 +153,9 @@ export class BrowserManager {
    * Get current browser
    */
   getBrowser(): Browser {
+    if (this.isPersistent) {
+      throw new Error('getBrowser() not available in persistent context mode. Use getContext() or getPage() instead.');
+    }
     if (!this.browser) {
       throw new Error('Browser not launched. Call launch() first.');
     }

@@ -53,7 +53,7 @@ function loadConfig(): AppConfig {
     const envPath = require('path').resolve(process.cwd(), '.env');
     const fs = require('fs');
     if (fs.existsSync(envPath)) {
-      logger.warn('Re-loading .env file');
+      console.warn('Re-loading .env file');
       dotenv.config({ override: true });
     }
   }

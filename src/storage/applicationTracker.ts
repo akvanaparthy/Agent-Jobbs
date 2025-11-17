@@ -51,8 +51,8 @@ export class ApplicationTracker {
 
       logger.info('Application recorded', {
         id: application.id,
-        jobTitle: application.title,
-        company: application.company,
+        jobTitle: application.job?.title || application.title,
+        company: application.job?.company || application.company,
       });
     } catch (error) {
       logger.error('Failed to record application', { error });

@@ -290,4 +290,11 @@ export class InteractiveApplicationFlow {
         return 'text';
     }
   }
+
+  /**
+   * Cleanup resources (close readline interface)
+   */
+  cleanup(): void {
+    this.approvalCLI.close();
+  }
 }

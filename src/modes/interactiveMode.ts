@@ -140,21 +140,23 @@ export async function runInteractiveMode() {
   const failedJobs: Array<{ job: JobListing; match: any; error: string }> = [];
   const applicationFlow = new InteractiveApplicationFlow(page, qaAgent, applicationTracker);
 
+  // TODO: RATE LIMIT DISABLED FOR TESTING - Re-enable before production use
   // Check rate limit before starting
-  const todayCount = applicationTracker.getTodayApplications().length;
-  const maxDaily = config.maxApplicationsPerDay;
+  // const todayCount = applicationTracker.getTodayApplications().length;
+  // const maxDaily = config.maxApplicationsPerDay;
 
-  if (todayCount >= maxDaily) {
-    logger.warn(`Daily application limit reached (${todayCount}/${maxDaily}). Stopping.`);
-  }
+  // if (todayCount >= maxDaily) {
+  //   logger.warn(`Daily application limit reached (${todayCount}/${maxDaily}). Stopping.`);
+  // }
 
   for (let i = 0; i < highScoringJobs.length; i++) {
+    // TODO: RATE LIMIT DISABLED FOR TESTING - Re-enable before production use
     // Enforce rate limit
-    const currentCount = applicationTracker.getTodayApplications().length;
-    if (currentCount >= maxDaily) {
-      logger.warn(`Reached daily limit (${maxDaily}). Stopping applications.`);
-      break;
-    }
+    // const currentCount = applicationTracker.getTodayApplications().length;
+    // if (currentCount >= maxDaily) {
+    //   logger.warn(`Reached daily limit (${maxDaily}). Stopping applications.`);
+    //   break;
+    // }
 
     const { job, match } = highScoringJobs[i];
 
@@ -197,6 +199,10 @@ export async function runInteractiveMode() {
       failedJobs.push({ job, match, error: error.message });
     }
   }
+
+  // Cleanup readline interface to allow process to exit
+  applicationFlow.cleanup();
+  logger.debug('Cleaned up application flow resources');
 
   // Close browser
   await browserManager.close();
