@@ -57,6 +57,18 @@ async function setupAuth(): Promise<void> {
   console.log('  ZipRecruiter Authentication Setup');
   console.log('===========================================\n');
 
+  // Check if using persistent context
+  const usePersistent = process.env.USE_PERSISTENT_CONTEXT === 'true';
+  
+  if (usePersistent) {
+    console.log('ℹ️  You are using PERSISTENT BROWSER PROFILE mode.');
+    console.log('   Email/password login is NOT required.\n');
+    console.log('📋 Please use the profile-based auth setup instead:');
+    console.log('   npm run auth:profile\n');
+    console.log('   Or manually log in when the browser opens during normal runs.\n');
+    process.exit(0);
+  }
+
   // Check if session already exists
   if (sessionManager.hasSession()) {
     const answer = await promptInput('A session already exists. Do you want to replace it? (y/n): ');
@@ -75,6 +87,9 @@ async function setupAuth(): Promise<void> {
     console.error('\n❌ ZIPRECRUITER_EMAIL not found in .env file!');
     console.error('Please add your email to the .env file:');
     console.error('ZIPRECRUITER_EMAIL=your_email@example.com\n');
+    console.error('ℹ️  Or switch to profile-based auth (recommended):');
+    console.error('   Set USE_PERSISTENT_CONTEXT=true in .env');
+    console.error('   Then run: npm run auth:profile\n');
     process.exit(1);
   }
 
