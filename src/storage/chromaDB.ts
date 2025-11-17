@@ -120,8 +120,9 @@ export class ChromaDBManager {
    */
   async addResumeChunks(chunks: ResumeChunk[]): Promise<void> {
     try {
-      if (!this.resumeCollection) {
-        throw new Error('Resume collection not initialized');
+      if (!this.client || !this.resumeCollection) {
+        logger.error('ChromaDB not initialized - cannot add resume chunks');
+        throw new Error('Resume collection not initialized. Call initialize() first.');
       }
 
       if (chunks.length === 0) {
@@ -168,8 +169,9 @@ export class ChromaDBManager {
    */
   async searchResumeChunks(query: string, limit: number = 5): Promise<ResumeChunk[]> {
     try {
-      if (!this.resumeCollection) {
-        throw new Error('Resume collection not initialized');
+      if (!this.client || !this.resumeCollection) {
+        logger.error('ChromaDB not initialized - cannot search resume chunks');
+        throw new Error('Resume collection not initialized. Call initialize() first.');
       }
 
       logger.debug('Searching resume chunks', { query, limit });
@@ -212,8 +214,9 @@ export class ChromaDBManager {
    */
   async addQAPair(qaPair: QAPair): Promise<void> {
     try {
-      if (!this.qaCollection) {
-        throw new Error('Q&A collection not initialized');
+      if (!this.client || !this.qaCollection) {
+        logger.error('ChromaDB not initialized - cannot add Q&A pair');
+        throw new Error('Q&A collection not initialized. Call initialize() first.');
       }
 
       logger.debug('Adding Q&A pair to ChromaDB', { id: qaPair.id });
@@ -246,8 +249,9 @@ export class ChromaDBManager {
    */
   async searchSimilarQuestions(question: string, limit: number = 3): Promise<QAPair[]> {
     try {
-      if (!this.qaCollection) {
-        throw new Error('Q&A collection not initialized');
+      if (!this.client || !this.qaCollection) {
+        logger.error('ChromaDB not initialized - cannot search Q&A pairs');
+        throw new Error('Q&A collection not initialized. Call initialize() first.');
       }
 
       logger.debug('Searching for similar questions', { question, limit });
@@ -439,8 +443,9 @@ export class ChromaDBManager {
    */
   async getAllResumeChunks(): Promise<ResumeChunk[]> {
     try {
-      if (!this.resumeCollection) {
-        throw new Error('Resume collection not initialized');
+      if (!this.client || !this.resumeCollection) {
+        logger.error('ChromaDB not initialized - cannot get resume chunks');
+        throw new Error('Resume collection not initialized. Call initialize() first.');
       }
 
       logger.debug('Getting all resume chunks');

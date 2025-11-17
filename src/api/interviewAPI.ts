@@ -16,8 +16,43 @@ import { logger } from '../utils/logger';
 export class InterviewAPIClient {
   private readonly baseUrl = 'https://www.ziprecruiter.com/apply/api/v2/interview';
   private readonly placementId = '44071'; // Constant across all applications
+  private readonly maxRetries = 3;
+  private readonly retryDelay = 2000; // ms
 
   constructor(private page: Page) {}
+
+  /**
+   * Retry helper for network operations
+   */
+  private async retryOperation<T>(
+    operation: () => Promise<T>,
+    operationName: string
+  ): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+
+        // Don't retry on 404 or other client errors
+        if (error.message && error.message.includes('HTTP 4')) {
+          throw error;
+        }
+
+        if (attempt < this.maxRetries) {
+          logger.warn(`${operationName} failed (attempt ${attempt}/${this.maxRetries}), retrying...`, {
+            error: error.message
+          });
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
+        }
+      }
+    }
+
+    logger.error(`${operationName} failed after ${this.maxRetries} attempts`);
+    throw lastError;
+  }
 
   /**
    * Fetch interview questions for a job
@@ -27,7 +62,7 @@ export class InterviewAPIClient {
 
     logger.info(`Fetching interview questions for ${listingKey}`);
 
-    try {
+    return this.retryOperation(async () => {
       const response = await this.page.evaluate(async (url) => {
         const res = await fetch(url, {
           method: 'GET',
@@ -46,10 +81,7 @@ export class InterviewAPIClient {
 
       logger.info(`Received ${response.totalQuestions} questions across ${response.totalGroups} group(s)`);
       return response as InterviewGetResponse;
-    } catch (error: any) {
-      logger.error(`Failed to fetch questions: ${error.message}`);
-      throw error;
-    }
+    }, 'getQuestions');
   }
 
   /**
@@ -67,7 +99,7 @@ export class InterviewAPIClient {
 
     logger.info(`Submitting ${answers.length} answers for group ${group}`);
 
-    try {
+    return this.retryOperation(async () => {
       const response = await this.page.evaluate(async ({ url, body }) => {
         const res = await fetch(url, {
           method: 'POST',
@@ -95,10 +127,7 @@ export class InterviewAPIClient {
       }
 
       return response as InterviewPostResponse;
-    } catch (error: any) {
-      logger.error(`Failed to submit answers: ${error.message}`);
-      throw error;
-    }
+    }, 'submitAnswers');
   }
 
   /**
@@ -116,7 +145,17 @@ export class InterviewAPIClient {
     let currentGroup = 1;
 
     // Step 2: Loop through groups until complete
+    let iterationCount = 0;
+    const maxIterations = 15;
+
     while (true) {
+      iterationCount++;
+
+      // Safety check: prevent infinite loops
+      if (iterationCount > maxIterations) {
+        throw new Error(`Exceeded maximum iterations (${maxIterations}), possible infinite loop`);
+      }
+
       // Get answers for current group's questions
       const answers = await answerProvider(currentResponse);
 
@@ -133,16 +172,11 @@ export class InterviewAPIClient {
       if (hasMoreQuestions(postResponse)) {
         currentResponse = postResponse;
         currentGroup = postResponse.group!;
-        logger.info(`Continuing to group ${currentGroup}`);
+        logger.info(`Continuing to group ${currentGroup} (iteration ${iterationCount})`);
       } else {
         // Unexpected state
         logger.warn('Unexpected response state', { status: postResponse.status });
         throw new Error('Unexpected interview state: neither complete nor more questions');
-      }
-
-      // Safety check: prevent infinite loops
-      if (currentGroup > 10) {
-        throw new Error('Too many question groups (>10), possible infinite loop');
       }
     }
   }
