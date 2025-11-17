@@ -33,6 +33,7 @@ export class ApplicationTracker {
     try {
       const date = new Date().toISOString().split('T')[0];
       const filepath = path.join(this.appliedDir, `applied-${date}.json`);
+      const tempFilepath = `${filepath}.tmp`;
 
       // Load existing applications for the day
       let applications: AppliedJob[] = [];
@@ -44,8 +45,9 @@ export class ApplicationTracker {
       // Add new application
       applications.push(application);
 
-      // Save
-      fs.writeFileSync(filepath, JSON.stringify(applications, null, 2));
+      // Atomic write: write to temp file first, then rename
+      fs.writeFileSync(tempFilepath, JSON.stringify(applications, null, 2));
+      fs.renameSync(tempFilepath, filepath);
 
       logger.info('Application recorded', {
         id: application.id,
@@ -158,10 +160,14 @@ export class ApplicationTracker {
       byDate.get(date)!.push(app);
     }
 
-    // Save each date's applications
+    // Save each date's applications with atomic writes
     for (const [date, apps] of byDate.entries()) {
       const filepath = path.join(this.appliedDir, `applied-${date}.json`);
-      fs.writeFileSync(filepath, JSON.stringify(apps, null, 2));
+      const tempFilepath = `${filepath}.tmp`;
+
+      // Atomic write: write to temp file first, then rename
+      fs.writeFileSync(tempFilepath, JSON.stringify(apps, null, 2));
+      fs.renameSync(tempFilepath, filepath);
     }
   }
 

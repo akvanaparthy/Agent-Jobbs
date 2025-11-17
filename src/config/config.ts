@@ -48,6 +48,16 @@ const configSchema = z.object({
 
 // Load and validate configuration
 function loadConfig(): AppConfig {
+  // Ensure .env is loaded
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const envPath = require('path').resolve(process.cwd(), '.env');
+    const fs = require('fs');
+    if (fs.existsSync(envPath)) {
+      logger.warn('Re-loading .env file');
+      dotenv.config({ override: true });
+    }
+  }
+
   const rawConfig = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     searchKeywords: process.env.SEARCH_KEYWORDS || 'software engineer',

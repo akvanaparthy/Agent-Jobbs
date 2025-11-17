@@ -140,7 +140,22 @@ export async function runInteractiveMode() {
   const failedJobs: Array<{ job: JobListing; match: any; error: string }> = [];
   const applicationFlow = new InteractiveApplicationFlow(page, qaAgent, applicationTracker);
 
+  // Check rate limit before starting
+  const todayCount = applicationTracker.getTodayApplications().length;
+  const maxDaily = config.maxApplicationsPerDay;
+
+  if (todayCount >= maxDaily) {
+    logger.warn(`Daily application limit reached (${todayCount}/${maxDaily}). Stopping.`);
+  }
+
   for (let i = 0; i < highScoringJobs.length; i++) {
+    // Enforce rate limit
+    const currentCount = applicationTracker.getTodayApplications().length;
+    if (currentCount >= maxDaily) {
+      logger.warn(`Reached daily limit (${maxDaily}). Stopping applications.`);
+      break;
+    }
+
     const { job, match } = highScoringJobs[i];
 
     logger.info(`\n${'='.repeat(80)}`);
@@ -155,9 +170,10 @@ export async function runInteractiveMode() {
 
       const listingKey = job.listingKey;
       if (!listingKey) {
-        logger.warn('No listing_key in job data, skipping job');
-        failedJobs.push({ job, match, error: 'No listing_key found' });
-        continue;
+        const errorMsg = 'No listing_key found - cannot proceed with application';
+        logger.error(errorMsg, { jobId: job.id, jobTitle: job.title });
+        failedJobs.push({ job, match, error: errorMsg });
+        continue; // Skip to next job
       }
 
       logger.info(`Listing key: ${listingKey}`);
