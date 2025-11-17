@@ -483,11 +483,25 @@ export const matchJobDescriptionTool: Tool = {
 };
 
 /**
- * Answer question using resume context
+ * Answer question using SMART ANSWER HANDLER with 3-tier confidence system
  */
 export const answerFromResumeTool: Tool = {
   name: 'answer_from_resume',
-  description: 'Answer an application form question by searching the resume for relevant context. Returns an answer based on resume content. Use this before asking human.',
+  description: `SMART ANSWER SYSTEM with 3-tier confidence handling:
+
+>= 90% confidence: Auto-apply answer, ask if should save to memory
+75-89% confidence: Suggest answer, wait for human approval/edit
+< 75% confidence: Ask human for answer directly
+
+Automatically checks (in order):
+1. ChromaDB for cached answers from past applications
+2. User profile for common fields (phone, email, address, etc.)
+3. Resume for professional/technical questions
+4. Human input as final fallback
+
+Always saves approved answers to ChromaDB for future learning.
+
+Use this for ALL application form questions.`,
   parameters: z.object({
     question: z.string().describe('The question text from the application form'),
     questionType: z.enum(['text', 'textarea', 'select', 'radio', 'checkbox']).describe('Type of form field'),
@@ -496,9 +510,11 @@ export const answerFromResumeTool: Tool = {
   }),
   async execute(params, context: AgentContext): Promise<ToolResult> {
     try {
-      logger.info('📝 Answering question from resume:', { question: params.question });
+      logger.info('🤖 Using smart answer handler:', { question: params.question });
 
-      // Create a minimal job object (we don't have full job context in this tool)
+      const { smartAnswerHandler } = await import('./smartAnswerHandler.js');
+
+      // Create a minimal job object for context
       const job: JobListing = {
         id: 'current',
         title: 'Unknown',
@@ -511,33 +527,38 @@ export const answerFromResumeTool: Tool = {
         scrapedAt: new Date().toISOString(),
       };
 
-      const answer = await qaAgent.answerQuestion(
-        {
-          id: `temp-q-${Date.now()}`,
-          label: params.question,
-          type: params.questionType,
-          options: params.options,
-          required: params.required ?? false,
-        },
+      const applicationQuestion = {
+        id: `temp-q-${Date.now()}`,
+        label: params.question,
+        type: params.questionType,
+        options: params.options,
+        required: params.required ?? false,
+      };
+
+      const result = await smartAnswerHandler.getAnswer(
+        applicationQuestion,
         job
       );
 
-      logger.info('Answer generated from resume', { 
-        answer: answer.answer,
-        confidence: answer.confidence 
+      logger.info('Smart answer complete', { 
+        answer: result.answer,
+        confidence: result.confidence,
+        source: result.source,
+        saved: result.saved,
       });
 
       return {
         success: true,
         result: {
-          answer: answer.answer,
-          confidence: answer.confidence,
-          source: answer.source,
-          shouldAskHuman: answer.confidence < 0.5, // Low confidence
+          answer: result.answer,
+          confidence: result.confidence,
+          source: result.source,
+          saved: result.saved,
+          tier: result.confidence >= 0.9 ? 'high' : result.confidence >= 0.75 ? 'medium' : 'low',
         },
       };
     } catch (error) {
-      logger.error('Failed to answer from resume', { error });
+      logger.error('Failed to answer question', { error });
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
