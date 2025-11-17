@@ -15,7 +15,9 @@
     "monitor": "ts-node scripts/monitor-ziprecruiter.ts",
     "monitor:api": "ts-node scripts/monitor-api-passive.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:api": "ts-node src/scripts/testAPIs.ts"
+    "test:api": "ts-node src/scripts/testAPIs.ts",
+    "test:agentic": "ts-node src/scripts/testAgenticSystem.ts",
+    "profile:setup": "ts-node src/scripts/setupUserProfile.ts"
   },
   "keywords": [
     "job-application",
@@ -38,6 +40,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
     "@langchain/anthropic": "^1.0.0",
     "@langchain/community": "^1.0.2",
     "@langchain/core": "^1.0.4",
