@@ -112,11 +112,34 @@ export async function runScrapeMode() {
   logger.info('\n🤖 Matching jobs with AI...\n');
   const jobsWithMatches: JobWithMatch[] = [];
 
+  let rateLimitDetected = false;
   for (const job of allJobs) {
     try {
       const matchReport = await matcherAgent.matchDescription(job);
+
+      // Check if rate limit was hit
+      if (matchReport.reasoning.includes('API rate limit')) {
+        logger.error('\n❌ CRITICAL: Anthropic API rate limit reached!');
+        logger.error('All subsequent jobs will have 0% match score.');
+        logger.error('Solutions:');
+        logger.error('  1. Wait until rate limit resets (check error message for date)');
+        logger.error('  2. Use a different ANTHROPIC_API_KEY in .env file');
+        logger.error('  3. Upgrade your Anthropic API tier\n');
+        rateLimitDetected = true;
+      }
+
       logger.info(`${job.title}: ${(matchReport.overallScore * 100).toFixed(0)}%`);
       jobsWithMatches.push({ job, match: matchReport });
+
+      // Stop trying after rate limit detected (all will fail)
+      if (rateLimitDetected) {
+        logger.warn(`Skipping remaining ${allJobs.length - jobsWithMatches.length} jobs due to rate limit`);
+        // Add remaining jobs without matches
+        for (let i = jobsWithMatches.length; i < allJobs.length; i++) {
+          jobsWithMatches.push({ job: allJobs[i] });
+        }
+        break;
+      }
     } catch (error) {
       logger.warn('Matcher error', { title: job.title, error });
       jobsWithMatches.push({ job });

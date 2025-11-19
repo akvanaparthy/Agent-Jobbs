@@ -76,7 +76,16 @@ Return ONLY the JSON object, no other text.`;
         score: Math.max(0, Math.min(1, result.score)), // Clamp to 0-1
         reasoning: result.reasoning,
       };
-    } catch (error) {
+    } catch (error: any) {
+      // Check for rate limit error
+      if (error?.error?.error?.type === 'invalid_request_error' &&
+          error?.error?.error?.message?.includes('API usage limits')) {
+        logger.error('⚠️  ANTHROPIC API RATE LIMIT REACHED', {
+          message: error.error.error.message
+        });
+        return { score: 0, reasoning: 'API rate limit reached' };
+      }
+
       logger.error('Title matching failed', { error });
       return { score: 0, reasoning: 'Error during matching' };
     }
@@ -176,7 +185,17 @@ Be thorough but concise. Return ONLY the JSON object.`;
       });
 
       return matchReport;
-    } catch (error) {
+    } catch (error: any) {
+      // Check for rate limit error
+      if (error?.error?.error?.type === 'invalid_request_error' &&
+          error?.error?.error?.message?.includes('API usage limits')) {
+        logger.error('⚠️  ANTHROPIC API RATE LIMIT REACHED', {
+          message: error.error.error.message,
+          resetDate: error.error.error.message.match(/2025-\d{2}-\d{2}/)?.[0] || 'unknown'
+        });
+        return this.createEmptyMatchReport('API rate limit reached - please wait or use different API key');
+      }
+
       logger.error('Job description matching failed', { error });
       return this.createEmptyMatchReport('Error during analysis');
     }
