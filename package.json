@@ -15,6 +15,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:api": "ts-node src/scripts/testAPIs.ts",
     "test:agentic": "ts-node src/scripts/testAgenticSystem.ts",
+    "test:vision": "ts-node src/scripts/testVisionInteractive.ts",
     "profile:setup": "ts-node src/scripts/setupUserProfile.ts"
   },
   "keywords": [

@@ -10,7 +10,7 @@ import { ScreenAnalysis, DetectedElement, UIState } from './types';
 
 export class VisionAgent {
   private client: Anthropic;
-  private model: string = 'claude-3-5-sonnet-20241022';
+  private model: string = 'claude-3-5-haiku-20241022';
 
   constructor() {
     this.client = new Anthropic({

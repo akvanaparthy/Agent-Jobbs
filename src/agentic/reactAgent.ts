@@ -23,7 +23,7 @@ import {
 
 export class ReActAgent {
   private client: Anthropic;
-  private model: string = 'claude-3-5-sonnet-20241022';
+  private model: string = 'claude-3-5-haiku-20241022';
   private maxIterations: number = 50;
   private confidenceThreshold: number = 0.5; // Ask human if confidence < 50%
 
