@@ -123,16 +123,17 @@ npm run build
 
 ### Step 1: Set Up Authentication
 
-Run the authentication setup to log in to ZipRecruiter:
+Run the profile-based authentication setup:
 
 ```bash
-npm run auth:setup
+npm run auth:profile
 ```
 
 This will:
-1. Open a browser window
-2. Wait for you to log in manually
-3. Save your session for future use
+1. Open a browser with persistent profile (data/browser-profile/)
+2. Wait for you to log in manually to ZipRecruiter
+3. Your session is automatically saved in the browser profile
+4. Login persists indefinitely - no need to re-run this!
 
 ### Step 2: Process Your Resume
 

@@ -43,7 +43,7 @@ async function setupProfileAuth(): Promise<void> {
     const { browser, context, page } = await browserManager.launch();
 
     console.log('✓ Browser launched successfully.');
-    console.log('   Profile location: ./playwright-profile/\n');
+    console.log('   Profile location: ./data/browser-profile/\n');
 
     // Navigate to ZipRecruiter homepage
     console.log('🌐 Navigating to ZipRecruiter...\n');
@@ -118,10 +118,10 @@ async function setupProfileAuth(): Promise<void> {
 
     console.log('✅ Authentication setup complete!\n');
     console.log('📋 What was saved:');
-    console.log('   • Browser profile: ./playwright-profile/ (persistent)');
-    console.log('   • Session data: ./data/sessions/ziprecruiter-session.json\n');
+    console.log('   • Browser profile: ./data/browser-profile/ (persistent)\n');
     console.log('ℹ️  Your login will be reused automatically in future runs.');
-    console.log('   No need to run this again unless session expires.\n');
+    console.log('   The persistent profile contains all cookies and local storage.');
+    console.log('   No need to run this again unless you want to re-login.\n');
 
     // Close browser
     await browserManager.close();

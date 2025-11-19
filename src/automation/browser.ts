@@ -190,12 +190,57 @@ export class BrowserManager {
 
   /**
    * Load session if available
+   * NOTE: Only used for non-persistent context mode
+   * Persistent context mode handles auth automatically via browser profile
    */
   async loadSession(): Promise<boolean> {
     if (!this.context || !this.page) {
       throw new Error('Browser not launched. Call launch() first.');
     }
 
+    // If using persistent context, session is already loaded from profile
+    // Just validate we can access ZipRecruiter
+    if (this.isPersistent) {
+      logger.info('Using persistent context - validating login state...');
+
+      // Navigate to ZipRecruiter to check login state
+      try {
+        await this.page.goto('https://www.ziprecruiter.com', {
+          waitUntil: 'domcontentloaded',
+          timeout: 60000
+        });
+
+        // Wait for Cloudflare if present
+        await this.page.waitForFunction(
+          () => {
+            const title = document.title;
+            return !title.includes('Just a moment') &&
+                   !title.includes('Checking your browser') &&
+                   !document.querySelector('#challenge-running');
+          },
+          { timeout: 60000 }
+        ).catch(() => {
+          logger.warn('Cloudflare challenge may be present - continuing anyway');
+        });
+
+        // Check if logged in
+        const isLoggedIn = await this.checkLoginState();
+
+        if (!isLoggedIn) {
+          logger.error('❌ Not logged in! Please run: npm run auth:profile');
+          logger.error('The persistent browser profile does not have an active ZipRecruiter session.');
+          return false;
+        }
+
+        logger.info('✅ Logged in via persistent profile');
+        return true;
+      } catch (error) {
+        logger.error('Failed to validate persistent profile login', { error });
+        return false;
+      }
+    }
+
+    // For non-persistent context, use session file
     const loaded = await sessionManager.loadSession(this.context, this.page);
 
     if (loaded) {
@@ -209,6 +254,57 @@ export class BrowserManager {
     }
 
     return loaded;
+  }
+
+  /**
+   * Check if user is logged in to ZipRecruiter
+   */
+  private async checkLoginState(): Promise<boolean> {
+    try {
+      const url = this.page!.url();
+
+      // Check URL indicators
+      if (url.includes('/login') || url.includes('/sign-in')) {
+        return false;
+      }
+
+      // Check for logged-in elements
+      const isLoggedIn = await this.page!.evaluate(() => {
+        // Common logged-in indicators
+        const selectors = [
+          '[data-test="user-menu"]',
+          '.user-profile',
+          '[aria-label*="Profile"]',
+          '[data-testid="profile-menu"]',
+          '[data-testid="account-menu"]',
+          '.user-avatar',
+          'button[aria-label*="Account"]',
+          'a[href*="/candidate/"]',
+        ];
+
+        for (const selector of selectors) {
+          if (document.querySelector(selector)) {
+            return true;
+          }
+        }
+
+        // Check for text indicators
+        const text = document.body.innerText || '';
+        const loggedInTexts = ['My Jobs', 'Applications', 'Sign Out', 'Log Out', 'Dashboard'];
+        for (const t of loggedInTexts) {
+          if (text.includes(t)) {
+            return true;
+          }
+        }
+
+        return false;
+      });
+
+      return isLoggedIn;
+    } catch (error) {
+      logger.error('Failed to check login state', { error });
+      return false;
+    }
   }
 
   /**

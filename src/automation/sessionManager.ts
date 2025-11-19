@@ -215,10 +215,10 @@ export class SessionManager {
         return false;
       }
 
-      // Check for elements that indicate logged-in state
+      // Check for elements and text that indicate logged-in state
       const debugInfo = await page.evaluate(() => {
-        // Look for common logged-in indicators
-        const selectors = {
+        // Look for a broader set of logged-in indicators
+        const selectors: Record<string, string> = {
           userMenu: '[data-test="user-menu"]',
           userProfile: '.user-profile',
           profileAria: '[aria-label="Profile"]',
@@ -226,28 +226,60 @@ export class SessionManager {
           accountMenu: '[data-testid="account-menu"]',
           userAvatar: '.user-avatar',
           accountButton: 'button[aria-label*="Account"]',
-          anyButton: 'button',
+          candidateLink: 'a[href*="/candidate/"]',
+          jobCard: '[data-testid="job-listing"], .job-card, [class*="job"]',
         };
 
         const found: Record<string, boolean> = {};
         Object.entries(selectors).forEach(([key, selector]) => {
-          found[key] = document.querySelector(selector) !== null;
+          try {
+            found[key] = document.querySelector(selector) !== null;
+          } catch (e) {
+            found[key] = false;
+          }
         });
+
+        // Text-based fuzzy checks for UI labels that often appear when logged in
+        const textCandidates = Array.from(document.querySelectorAll('a,button,span')).map(el => (el.textContent || '').trim()).filter(Boolean);
+        const hasMyJobs = textCandidates.some(t => /(my jobs|applications|dashboard|profile|sign out|log out|account)/i.test(t));
+
+        const title = document.title || '';
+        const bodySnippet = (document.body && document.body.innerText) ? document.body.innerText.slice(0, 1200) : '';
 
         return {
           found,
-          title: document.title,
-          hasJobListings: document.querySelector('[data-testid="job-listing"]') !== null ||
-                          document.querySelector('.job-card') !== null ||
-                          document.querySelector('[class*="job"]') !== null,
+          title,
+          hasJobListings: document.querySelector(selectors.jobCard) !== null,
+          hasMyJobs,
+          bodySnippet,
         };
       });
 
-      logger.info('Page validation debug info', debugInfo);
+      // Log debug info (bodySnippet truncated) and cookie names will be logged below
+      logger.info('Page validation debug info', {
+        title: debugInfo.title,
+        found: debugInfo.found,
+        hasJobListings: debugInfo.hasJobListings,
+        hasMyJobs: debugInfo.hasMyJobs,
+      });
+
+      // Inspect cookies for session-like names (helps detect logged-in state)
+      let cookieNames: string[] = [];
+      try {
+        const cookies = await page.context().cookies();
+        cookieNames = cookies.map(c => c.name);
+        logger.info('Session cookies present', { cookieNames });
+      } catch (err) {
+        logger.warn('Could not read cookies during session validation', { error: err });
+      }
+
+      const hasSessionCookie = cookieNames.some(n => /session|ziprecruiter|auth|sid/i.test(n));
 
       const isLoggedIn = Object.values(debugInfo.found).some(v => v) || 
                         debugInfo.hasJobListings ||
-                        url.includes('/candidate/');
+                        debugInfo.hasMyJobs ||
+                        url.includes('/candidate/') ||
+                        hasSessionCookie;
 
       if (isLoggedIn) {
         logger.info('Session is valid');
