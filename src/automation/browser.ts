@@ -265,11 +265,12 @@ export class BrowserManager {
 
       // Check URL indicators
       if (url.includes('/login') || url.includes('/sign-in')) {
+        logger.info('Not logged in - on login page', { url });
         return false;
       }
 
       // Check for logged-in elements
-      const isLoggedIn = await this.page!.evaluate(() => {
+      const result = await this.page!.evaluate(() => {
         // Common logged-in indicators
         const selectors = [
           '[data-test="user-menu"]',
@@ -282,27 +283,44 @@ export class BrowserManager {
           'a[href*="/candidate/"]',
         ];
 
+        const foundSelectors: string[] = [];
         for (const selector of selectors) {
           if (document.querySelector(selector)) {
-            return true;
+            foundSelectors.push(selector);
           }
         }
 
         // Check for text indicators
         const text = document.body.innerText || '';
         const loggedInTexts = ['My Jobs', 'Applications', 'Sign Out', 'Log Out', 'Dashboard'];
+        const foundTexts: string[] = [];
         for (const t of loggedInTexts) {
           if (text.includes(t)) {
-            return true;
+            foundTexts.push(t);
           }
         }
 
-        return false;
+        return {
+          isLoggedIn: foundSelectors.length > 0 || foundTexts.length > 0,
+          foundSelectors,
+          foundTexts,
+          title: document.title,
+        };
       });
 
-      return isLoggedIn;
+      logger.info('Login state check', {
+        url,
+        isLoggedIn: result.isLoggedIn,
+        foundSelectors: result.foundSelectors,
+        foundTexts: result.foundTexts,
+        pageTitle: result.title,
+      });
+
+      return result.isLoggedIn;
     } catch (error) {
-      logger.error('Failed to check login state', { error });
+      logger.error('Failed to check login state', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

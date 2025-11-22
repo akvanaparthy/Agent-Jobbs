@@ -185,21 +185,23 @@ export class SessionManager {
         await page.waitForFunction(
           () => {
             const title = document.title;
-            return !title.includes('Just a moment') && 
+            return !title.includes('Just a moment') &&
                    !title.includes('Checking your browser') &&
                    !document.querySelector('#challenge-running');
           },
-          { timeout: 30000 }
+          { timeout: 60000 }
         );
         logger.info('No Cloudflare challenge or passed successfully');
       } catch (error) {
-        logger.warn('Cloudflare challenge timeout - may be stuck');
+        logger.warn('Cloudflare challenge timeout - may be stuck', {
+          error: error instanceof Error ? error.message : String(error)
+        });
         // Check if we're actually blocked
         const title = await page.title();
         if (title.includes('Just a moment')) {
           logger.error('Stuck on Cloudflare challenge - please solve manually');
           // Wait longer for manual intervention
-          await page.waitForTimeout(60000);
+          await page.waitForTimeout(90000);
         }
       }
 
@@ -285,11 +287,20 @@ export class SessionManager {
         logger.info('Session is valid');
         return true;
       } else {
-        logger.warn('Session appears invalid - no logged-in indicators found');
+        logger.warn('Session appears invalid - no logged-in indicators found', {
+          url,
+          foundIndicators: debugInfo.found,
+          hasJobListings: debugInfo.hasJobListings,
+          hasMyJobs: debugInfo.hasMyJobs,
+          hasSessionCookie,
+        });
         return false;
       }
     } catch (error) {
-      logger.error('Failed to validate session', { error });
+      logger.error('Failed to validate session', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return false;
     }
   }
