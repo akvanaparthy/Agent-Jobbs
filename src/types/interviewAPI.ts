@@ -5,7 +5,7 @@
 
 export type QuestionType = 'textField' | 'select' | 'info';
 
-export type ApplicationStatus = 'SCREENING_QUESTIONS' | 'REVIEW';
+export type ApplicationStatus = 'SCREENING_QUESTIONS' | 'REVIEW' | 'COMPLETED';
 
 export type QuestionGroupCategory = 'job' | 'compliance';
 

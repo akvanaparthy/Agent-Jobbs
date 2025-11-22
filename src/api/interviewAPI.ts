@@ -57,31 +57,40 @@ export class InterviewAPIClient {
   /**
    * Fetch interview questions for a job
    */
-  async getQuestions(listingKey: string): Promise<InterviewGetResponse> {
+  async getQuestions(listingKey: string): Promise<InterviewGetResponse | null> {
     const url = `${this.baseUrl}?listing_key=${listingKey}&placement_id=${this.placementId}`;
 
     logger.info(`Fetching interview questions for ${listingKey}`);
 
-    return this.retryOperation(async () => {
-      const response = await this.page.evaluate(async (url) => {
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'X-Requested-With': 'fetch'
+    try {
+      return await this.retryOperation(async () => {
+        const response = await this.page.evaluate(async (url) => {
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'fetch'
+            }
+          });
+
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
           }
-        });
 
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
+          return await res.json();
+        }, url);
 
-        return await res.json();
-      }, url);
-
-      logger.info(`Received ${response.totalQuestions} questions across ${response.totalGroups} group(s)`);
-      return response as InterviewGetResponse;
-    }, 'getQuestions');
+        logger.info(`Received ${response.totalQuestions ?? 'undefined'} questions across ${response.totalGroups ?? 'undefined'} group(s)`);
+        return response as InterviewGetResponse;
+      }, 'getQuestions');
+    } catch (error: any) {
+      // If API returns 404, it likely means the session isn't initialized or API isn't available
+      if (error.message && error.message.includes('HTTP 404')) {
+        logger.warn('Interview API returned 404 - session may not be initialized or API not available');
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -137,11 +146,19 @@ export class InterviewAPIClient {
   async completeInterview(
     listingKey: string,
     answerProvider: (questions: InterviewGetResponse | InterviewPostResponse) => Promise<Answer[]>
-  ): Promise<InterviewPostResponse> {
+  ): Promise<InterviewPostResponse | null> {
     logger.info(`Starting interview for ${listingKey}`);
 
     // Step 1: GET initial questions
-    let currentResponse: InterviewGetResponse | InterviewPostResponse = await this.getQuestions(listingKey);
+    const initialResponse = await this.getQuestions(listingKey);
+
+    // If API not available, return null
+    if (!initialResponse) {
+      logger.warn('Interview API not available for this job');
+      return null;
+    }
+
+    let currentResponse: InterviewGetResponse | InterviewPostResponse = initialResponse;
     let currentGroup = 1;
 
     // Step 2: Loop through groups until complete
@@ -174,6 +191,12 @@ export class InterviewAPIClient {
         currentGroup = postResponse.group!;
         logger.info(`Continuing to group ${currentGroup} (iteration ${iterationCount})`);
       } else {
+        // Handle COMPLETED status without more questions (already applied or no questions)
+        if (postResponse.status === 'COMPLETED') {
+          logger.info('Application already completed or no questions required');
+          return postResponse;
+        }
+
         // Unexpected state
         logger.warn('Unexpected response state', { status: postResponse.status });
         throw new Error('Unexpected interview state: neither complete nor more questions');
